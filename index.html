@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="robots" content="noindex, nofollow">
+  <title>V.E.S.T.A — Acceso</title>
+  <link rel="stylesheet" href="login.css">
+</head>
+<body>
+  <div class="card">
+
+    <div class="brand">
+      <img src="logo_vesta.png" alt="V.E.S.T.A">
+      <h1>V.E.S.T.A</h1>
+      <p>Sistema Técnico de Calibración</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <form id="loginForm" autocomplete="off" novalidate>
+      <div class="field">
+        <label for="uInput">Usuario</label>
+        <input type="text"
+               id="uInput"
+               name="username"
+               placeholder="Ingresa tu usuario"
+               autocomplete="username"
+               maxlength="64"
+               spellcheck="false"
+               autofocus>
+      </div>
+      <div class="field">
+        <label for="pInput">Contraseña</label>
+        <input type="password"
+               id="pInput"
+               name="password"
+               placeholder="Ingresa tu contraseña"
+               autocomplete="current-password"
+               maxlength="64">
+      </div>
+
+      <button class="btn" type="submit" id="loginBtn">Ingresar</button>
+
+      <div class="error" id="errMsg" role="alert" aria-live="assertive"></div>
+
+      <div class="lockout-bar" id="lockoutBar">
+        <div class="lockout-bar-fill" id="lockoutFill" style="width:100%"></div>
+      </div>
+
+      <div class="attempt-dots" aria-hidden="true">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+    </form>
+
+    <div class="sep"><span>o</span></div>
+
+    <button class="btn-guest" type="button" id="guestBtn">
+      Continuar como Invitado
+    </button>
+
+    <div class="footer">V.E.S.T.A &copy; 2026 &mdash; Acceso Restringido</div>
+  </div>
+
+  <script src="login.js"></script>
+</body>
+</html>

@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <script>if(!sessionStorage.getItem('_vs')){window.location.replace('index.html');}</script>
+  <title>V.E.S.T.A Tecnico | Calibracion</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <button class="nav-toggle" id="nav-toggle" aria-label="Abrir navegacion" aria-expanded="false">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="2" y1="4.5"  x2="16" y2="4.5"/>
+            <line x1="2" y1="9"    x2="16" y2="9"/>
+            <line x1="2" y1="13.5" x2="16" y2="13.5"/>
+          </svg>
+        </button>
+        <div class="brand-mark" aria-hidden="true">
+          <img src="logo_vesta.png" alt="">
+        </div>
+        <div class="brand-details">
+          <div class="eyebrow">V.E.S.T.A Tecnico</div>
+          <h1>Calibracion de Exoesqueleto</h1>
+        </div>
+      </div>
+
+      <div class="status-strip" aria-live="polite">
+        <div class="status-pill" id="s3-status">
+          <span class="dot"></span>
+          <span>ESP32-S3</span>
+          <b>Offline</b>
+        </div>
+        <div class="status-pill" id="cam-status">
+          <span class="dot"></span>
+          <span>ESP32-CAM</span>
+          <b>Offline</b>
+        </div>
+        <div class="status-pill" id="profile-status">
+          <span class="dot"></span>
+          <span>Perfil</span>
+          <b>Sin guardar</b>
+        </div>
+      </div>
+    </header>
+
+    <div id="rail-backdrop" aria-hidden="true"></div>
+
+    <main class="layout">
+      <nav class="rail" aria-label="Fases de armado y calibracion">
+        <button class="rail-btn active" data-panel="armado" title="Armado">
+          <span>01</span>
+          <b>Armado</b>
+        </button>
+        <button class="rail-btn" data-panel="firmware" title="Firmware">
+          <span>02</span>
+          <b>Firmware</b>
+        </button>
+        <button class="rail-btn" data-panel="diagnostico" title="Diagnostico">
+          <span>03</span>
+          <b>Diagnostico</b>
+        </button>
+        <button class="rail-btn" data-panel="servos" title="Servos">
+          <span>04</span>
+          <b>Servos</b>
+        </button>
+        <button class="rail-btn" data-panel="sensores" title="Sensores">
+          <span>05</span>
+          <b>Sensores</b>
+        </button>
+        <button class="rail-btn" data-panel="mapeo" title="Mapeo">
+          <span>06</span>
+          <b>Mapeo</b>
+        </button>
+        <button class="rail-btn" data-panel="pruebas" title="Pruebas">
+          <span>07</span>
+          <b>Pruebas</b>
+        </button>
+        <button class="rail-btn" data-panel="entrega" title="Entrega">
+          <span>08</span>
+          <b>Entrega</b>
+        </button>
+      </nav>
+
+      <section class="workspace">
+        <section class="work-panel active" id="panel-armado">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Construccion fisica desde cero</p>
+              <h2>Armado</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-build-reset" title="Limpiar progreso">Reiniciar</button>
+              <button class="btn primary" id="btn-build-complete" title="Marcar todo">Marcar todo</button>
+            </div>
+          </div>
+
+          <div class="build-grid">
+            <div>
+              <div class="subhead">
+                <h3>Bill of materials</h3>
+                <span id="bom-count">0/0</span>
+              </div>
+              <div class="check-list" id="bom-list"></div>
+            </div>
+            <div>
+              <div class="subhead">
+                <h3>Pasos de armado</h3>
+                <span id="build-step-count">0/0</span>
+              </div>
+              <ol class="build-steps" id="build-steps"></ol>
+            </div>
+          </div>
+
+          <div class="phase-summary" id="armado-summary"></div>
+        </section>
+
+        <section class="work-panel" id="panel-diagnostico">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Banco de instalacion</p>
+              <h2>Diagnostico</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn danger" id="btn-stop" title="Paro de emergencia">STOP</button>
+              <button class="btn" id="btn-reset" title="Reset seguro">Reset</button>
+              <button class="btn primary" id="btn-status" title="Solicitar estado">Estado</button>
+            </div>
+          </div>
+
+          <div class="diagnostic-grid">
+            <div class="visual-stage">
+              <canvas id="exo-canvas" width="980" height="620" aria-label="Vista tecnica del exoesqueleto"></canvas>
+              <div class="canvas-hud">
+                <div>
+                  <span>Modo</span>
+                  <b id="hud-mode">assisted</b>
+                </div>
+                <div>
+                  <span>Asistencia</span>
+                  <b id="hud-assist">50%</b>
+                </div>
+                <div>
+                  <span>Bateria</span>
+                  <b id="hud-battery">--</b>
+                </div>
+              </div>
+            </div>
+
+            <div class="check-panel">
+              <div class="subhead">
+                <h3>Hardware</h3>
+                <span id="check-count">0/13</span>
+              </div>
+              <div class="check-list" id="hardware-checks"></div>
+            </div>
+          </div>
+
+          <div class="metric-grid" id="live-metrics"></div>
+        </section>
+
+        <section class="work-panel" id="panel-servos">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">DS51150 150kg/cm 270deg</p>
+              <h2>Servos</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-manual-mode">Modo manual</button>
+              <button class="btn" id="btn-home-all">Homes</button>
+              <button class="btn primary" id="btn-send-servo-profile">Enviar servos</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="cal-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Canal</th>
+                  <th>Articulacion</th>
+                  <th>Sensor</th>
+                  <th>Min</th>
+                  <th>Max</th>
+                  <th>Home</th>
+                  <th>Dir</th>
+                  <th>PWM 0</th>
+                  <th>PWM 270</th>
+                  <th>Offset</th>
+                  <th>Prueba</th>
+                </tr>
+              </thead>
+              <tbody id="servo-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="work-panel" id="panel-sensores">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">4 MPU6050 + 2 flex 4.5 in</p>
+              <h2>Sensores</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-calibrate-imu">Calibrar IMU</button>
+              <button class="btn" id="btn-capture-neutral">Neutral todos</button>
+              <button class="btn primary" id="btn-send-sensor-profile">Enviar sensores</button>
+            </div>
+          </div>
+
+          <div class="sensor-layout">
+            <div>
+              <div class="subhead">
+                <h3>MPU6050</h3>
+                <span>TCA9548A buses 0-3</span>
+              </div>
+              <div class="sensor-grid" id="imu-grid"></div>
+            </div>
+            <div>
+              <div class="subhead">
+                <h3>Flex</h3>
+                <span>ADC GPIO34 / GPIO35</span>
+              </div>
+              <div class="sensor-grid" id="flex-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="work-panel" id="panel-mapeo">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Asistencia y protecciones</p>
+              <h2>Mapeo</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-test-map">Probar mapeo</button>
+              <button class="btn primary" id="btn-send-map-profile">Enviar mapeo</button>
+            </div>
+          </div>
+
+          <div class="mapping-layout">
+            <div class="tuning-panel">
+              <label class="control-line">
+                <span>Asistencia</span>
+                <input type="range" id="assist-level" min="0" max="1" step="0.05" value="0.5">
+                <b id="assist-label">50%</b>
+              </label>
+              <label class="control-line">
+                <span>Zona muerta</span>
+                <input type="range" id="deadband" min="0" max="8" step="0.5" value="2">
+                <b id="deadband-label">2 deg</b>
+              </label>
+              <label class="control-line">
+                <span>Suavizado</span>
+                <input type="range" id="smoothing" min="0.05" max="0.8" step="0.05" value="0.25">
+                <b id="smoothing-label">0.25</b>
+              </label>
+              <label class="control-line">
+                <span>Velocidad max</span>
+                <input type="range" id="max-speed" min="30" max="180" step="5" value="90">
+                <b id="speed-label">90 deg/s</b>
+              </label>
+            </div>
+
+            <div class="mapping-list" id="mapping-list"></div>
+          </div>
+        </section>
+
+        <section class="work-panel" id="panel-pruebas">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Verificacion previa a entrega</p>
+              <h2>Pruebas</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-tests-reset" title="Borrar resultados">Reiniciar</button>
+              <button class="btn primary" id="btn-tests-run-all" title="Ejecutar todas">Ejecutar todas</button>
+            </div>
+          </div>
+
+          <div class="tests-grid">
+            <div>
+              <div class="subhead">
+                <h3>Suite automatica</h3>
+                <span id="tests-summary">0/0</span>
+              </div>
+              <div class="test-list" id="test-list"></div>
+            </div>
+            <div>
+              <div class="subhead">
+                <h3>Bitacora</h3>
+                <span id="tests-last-run">Sin ejecuciones</span>
+              </div>
+              <pre class="test-log" id="test-log" aria-live="polite"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="work-panel" id="panel-entrega">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Perfil local de distribucion</p>
+              <h2>Entrega</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-copy-profile">Copiar JSON</button>
+              <button class="btn" id="btn-download-profile">Descargar</button>
+              <button class="btn primary" id="btn-send-profile">Enviar perfil</button>
+            </div>
+          </div>
+
+          <div class="readiness-gate" id="readiness-gate"></div>
+
+          <div class="handoff-grid">
+            <div class="form-panel">
+              <label>
+                <span>Serie exoesqueleto</span>
+                <input id="exo-serial" type="text" autocomplete="off" placeholder="VESTA-0001">
+              </label>
+              <label>
+                <span>Tecnico</span>
+                <input id="tech-name" type="text" autocomplete="off" placeholder="Nombre">
+              </label>
+              <label>
+                <span>Cliente local</span>
+                <input id="client-name" type="text" autocomplete="off" placeholder="Cliente">
+              </label>
+              <label>
+                <span>Firmware ESP32-S3</span>
+                <input id="firmware-version" type="text" autocomplete="off" placeholder="VESTA-REAL-2.0">
+              </label>
+              <label>
+                <span>Notas tecnicas</span>
+                <textarea id="handoff-notes" rows="6" placeholder="Ajustes mecanicos, correas, topes, pruebas de carga"></textarea>
+              </label>
+            </div>
+            <div class="profile-panel">
+              <div class="profile-toolbar">
+                <span id="profile-size">0 KB</span>
+                <span id="profile-updated">Pendiente</span>
+              </div>
+              <pre id="profile-preview" aria-label="Perfil JSON de calibracion"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="work-panel" id="panel-firmware">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">Carga local por arduino-cli</p>
+              <h2>Firmware</h2>
+            </div>
+            <div class="action-row">
+              <button class="btn" id="btn-refresh-ports">Detectar puertos</button>
+              <button class="btn primary" id="btn-arduino-status">Arduino CLI</button>
+            </div>
+          </div>
+
+          <div class="firmware-grid">
+            <article class="firmware-card" data-device="s3">
+              <div class="firmware-head">
+                <div>
+                  <p class="section-kicker">Control principal</p>
+                  <h3>ESP32-S3 N16R8</h3>
+                </div>
+                <span class="device-badge" id="fw-status-s3">Pendiente</span>
+              </div>
+
+              <div class="firmware-form">
+                <label>
+                  <span>Archivo .ino</span>
+                  <input type="file" id="fw-file-s3" accept=".ino,.cpp,.h,.txt">
+                </label>
+                <label>
+                  <span>FQBN</span>
+                  <input id="fw-fqbn-s3" type="text" value="esp32:esp32:esp32s3" spellcheck="false">
+                </label>
+                <label>
+                  <span>Puerto</span>
+                  <select id="fw-port-s3">
+                    <option value="">Seleccionar</option>
+                  </select>
+                </label>
+              </div>
+
+              <textarea id="fw-code-s3" class="code-editor" spellcheck="false" placeholder="// Firmware ESP32-S3"></textarea>
+
+              <div class="action-row">
+                <button class="btn" data-fw-action="bundled" data-device="s3">Firmware</button>
+                <button class="btn" data-fw-action="clear" data-device="s3">Limpiar</button>
+                <button class="btn" data-fw-action="verify" data-device="s3">Verificar</button>
+                <button class="btn primary" data-fw-action="upload" data-device="s3">Subir S3</button>
+              </div>
+            </article>
+
+            <article class="firmware-card" data-device="cam">
+              <div class="firmware-head">
+                <div>
+                  <p class="section-kicker">Vision auxiliar</p>
+                  <h3>ESP32-CAM</h3>
+                </div>
+                <span class="device-badge" id="fw-status-cam">Pendiente</span>
+              </div>
+
+              <div class="firmware-form">
+                <label>
+                  <span>Archivo .ino</span>
+                  <input type="file" id="fw-file-cam" accept=".ino,.cpp,.h,.txt">
+                </label>
+                <label>
+                  <span>FQBN</span>
+                  <input id="fw-fqbn-cam" type="text" value="esp32:esp32:esp32cam" spellcheck="false">
+                </label>
+                <label>
+                  <span>Puerto</span>
+                  <select id="fw-port-cam">
+                    <option value="">Seleccionar</option>
+                  </select>
+                </label>
+              </div>
+
+              <textarea id="fw-code-cam" class="code-editor" spellcheck="false" placeholder="// Firmware ESP32-CAM"></textarea>
+
+              <div class="action-row">
+                <button class="btn" data-fw-action="bundled" data-device="cam">Firmware</button>
+                <button class="btn" data-fw-action="clear" data-device="cam">Limpiar</button>
+                <button class="btn" data-fw-action="verify" data-device="cam">Verificar</button>
+                <button class="btn primary" data-fw-action="upload" data-device="cam">Subir CAM</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="firmware-console">
+            <div class="profile-toolbar">
+              <span id="fw-cli-status">Sin consultar</span>
+              <span id="fw-last-action">Pendiente</span>
+            </div>
+            <pre id="fw-output"></pre>
+          </div>
+        </section>
+      </section>
+
+      <aside class="side-panel">
+        <section class="connect-panel">
+          <div class="subhead compact">
+            <h3>ESP32-S3</h3>
+            <span>WebSocket</span>
+          </div>
+          <label class="field">
+            <span>URL</span>
+            <input id="s3-url" type="url" value="ws://192.168.1.100:81" spellcheck="false">
+          </label>
+          <div class="button-grid">
+            <button class="btn primary" id="btn-connect-s3">Conectar</button>
+            <button class="btn" id="btn-disconnect-s3">Desconectar</button>
+          </div>
+        </section>
+
+        <section class="connect-panel">
+          <div class="subhead compact">
+            <h3>ESP32-CAM</h3>
+            <span>Stream</span>
+          </div>
+          <label class="field">
+            <span>URL</span>
+            <input id="cam-url" type="url" value="http://192.168.1.101:81/stream" spellcheck="false">
+          </label>
+          <div class="camera-box">
+            <img id="cam-stream" alt="Stream ESP32-CAM">
+            <div id="cam-placeholder">CAM</div>
+          </div>
+          <div class="button-grid">
+            <button class="btn primary" id="btn-start-cam">Iniciar</button>
+            <button class="btn" id="btn-stop-cam">Detener</button>
+          </div>
+        </section>
+
+        <section class="connect-panel">
+          <div class="subhead compact">
+            <h3>Sesion</h3>
+            <span id="session-clock">00:00</span>
+          </div>
+          <div class="button-grid">
+            <button class="btn" id="btn-demo">Demo</button>
+            <button class="btn" id="btn-save-local">Guardar local</button>
+          </div>
+          <div class="log" id="event-log" aria-live="polite"></div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="app-footer" aria-label="Estado de la herramienta">
+      <div class="footer-left">
+        <span class="footer-brand">V.E.S.T.A TECH CONSOLE</span>
+        <span>v1.0</span>
+        <span id="footer-panel">Diagnostico</span>
+      </div>
+      <div class="footer-center">
+        <span>S3 <b id="footer-s3">Offline</b></span>
+        <span>CAM <b id="footer-cam">Offline</b></span>
+        <span>Perfil <b id="footer-profile">Sin guardar</b></span>
+        <span>Modo <b id="footer-mode">assisted</b></span>
+      </div>
+      <div class="footer-right">
+        <span>Sesion <b id="footer-session">00:00</b></span>
+        <span>Paquetes <b id="footer-packets">0</b></span>
+        <span>Localhost <b>5177</b></span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    (function () {
+      const toggle   = document.getElementById('nav-toggle');
+      const backdrop = document.getElementById('rail-backdrop');
+      const rail     = document.querySelector('.rail');
+
+      function openNav() {
+        rail.classList.add('open');
+        backdrop.classList.add('show');
+        toggle.setAttribute('aria-expanded', 'true');
+        document.body.style.overflow = '';
+      }
+
+      function closeNav() {
+        rail.classList.remove('open');
+        backdrop.classList.remove('show');
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+
+      toggle.addEventListener('click', function () {
+        rail.classList.contains('open') ? closeNav() : openNav();
+      });
+
+      backdrop.addEventListener('click', closeNav);
+
+      rail.querySelectorAll('.rail-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (window.innerWidth <= 640) closeNav();
+        });
+      });
+
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeNav();
+      });
+    })();
+  </script>
+</body>
+</html>
