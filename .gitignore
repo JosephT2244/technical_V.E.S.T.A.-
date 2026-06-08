@@ -1,0 +1,16 @@
+# Comentarios de programador: identifican por que cada patron queda fuera de Git.
+
+# Comentario: Dependencias Node: se regeneran con npm y no se versionan.
+node_modules/
+# Comentario: Logs locales: salida de ejecucion no reproducible.
+*.log
+# Comentario: Metadatos macOS: archivo de escritorio sin valor para el repo.
+.DS_Store
+# Comentario: Metadatos Windows: cache de miniaturas sin valor para el repo.
+Thumbs.db
+# Comentario: Binario Arduino CLI: herramienta local pesada, fuera de Git.
+arduino-cli.exe
+
+# Credenciales — archivo privado, solo local, NUNCA subir
+# Comentario: Credenciales privadas: hashes locales que no deben subirse.
+credentials.js

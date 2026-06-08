@@ -1,0 +1,403 @@
+/* Comentarios de programador: identifican selectores y propiedades sin cambiar la cascada. */
+/* Archivo        | login.css: estilos de acceso, bloqueo y animaciones del login. */
+
+/* Regla CSS: estilo asociado a *, *::before, *::after. */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Tokens globales: variables de color, sombra y espaciado. */
+:root {
+  --vesta:        #0b5ea8;                                                            /* Propiedad variable vesta: define presentacion visual del bloque. */
+  --vesta-dark:   #001221;                                                            /* Propiedad variable vesta-dark: define presentacion visual del bloque. */
+  --vesta-mid:    #06345b;                                                            /* Propiedad variable vesta-mid: define presentacion visual del bloque. */
+  --vesta-bright: #2489e6;                                                            /* Propiedad variable vesta-bright: define presentacion visual del bloque. */
+  --surface:      rgba(6, 52, 91, 0.52);                                              /* Propiedad variable surface: define presentacion visual del bloque. */
+  --line:         rgba(36, 137, 230, 0.22);                                           /* Propiedad variable line: define presentacion visual del bloque. */
+  --error-bg:     rgba(179, 38, 30, 0.14);                                            /* Propiedad variable error-bg: define presentacion visual del bloque. */
+  --error-border: rgba(179, 38, 30, 0.40);                                            /* Propiedad variable error-border: define presentacion visual del bloque. */
+  --error-text:   #f49090;                                                            /* Propiedad variable error-text: define presentacion visual del bloque. */
+  --muted:        #7a9fc0;                                                            /* Propiedad variable muted: define presentacion visual del bloque. */
+  --placeholder:  #3a5a78;                                                            /* Propiedad variable placeholder: define presentacion visual del bloque. */
+}
+
+/* Base del documento: estructura y fondo global. */
+html, body { height: 100%; }
+
+/* Base del documento: estructura y fondo global. */
+body {
+  background: var(--vesta-dark);                                                      /* Propiedad background: define presentacion visual del bloque. */
+  color: #e8f0f8;                                                                     /* Propiedad color: define presentacion visual del bloque. */
+  font-family: Inter, "Segoe UI", Arial, sans-serif;                                  /* Propiedad font-family: define presentacion visual del bloque. */
+  display: flex;                                                                      /* Propiedad display: define presentacion visual del bloque. */
+  align-items: center;                                                                /* Propiedad align-items: define presentacion visual del bloque. */
+  justify-content: center;                                                            /* Propiedad justify-content: define presentacion visual del bloque. */
+  min-height: 100vh;                                                                  /* Propiedad min-height: define presentacion visual del bloque. */
+  overflow: hidden;                                                                   /* Propiedad overflow: define presentacion visual del bloque. */
+  user-select: none;                                                                  /* Propiedad user-select: define presentacion visual del bloque. */
+}
+
+/* ─── Gradient background ─────────────────────────────────────────── */
+body::before {
+  content: "";                                                                        /* Propiedad content: define presentacion visual del bloque. */
+  position: fixed;                                                                    /* Propiedad position: define presentacion visual del bloque. */
+  inset: 0;                                                                           /* Propiedad inset: define presentacion visual del bloque. */
+  background:                                                                         /* Propiedad background: define presentacion visual del bloque. */
+    radial-gradient(ellipse 65% 55% at 18% 28%, rgba(11,94,168,.38) 0%, transparent 68%),
+    radial-gradient(ellipse 55% 65% at 82% 72%, rgba(6,52,91,.48)   0%, transparent 68%),
+    radial-gradient(ellipse 40% 40% at 50% 50%, rgba(36,137,230,.06) 0%, transparent 70%);
+  pointer-events: none;                                                               /* Propiedad pointer-events: define presentacion visual del bloque. */
+  z-index: 0;                                                                         /* Propiedad z-index: define presentacion visual del bloque. */
+  animation: bgPulse 10s ease-in-out infinite alternate;                              /* Propiedad animation: define presentacion visual del bloque. */
+}
+
+/* Animacion bgPulse: define estados intermedios. */
+@keyframes bgPulse {
+  /* Regla CSS: estilo asociado a from. */
+  from { opacity: .85; }
+  /* Regla CSS: estilo asociado a to. */
+  to   { opacity: 1;   }
+}
+
+/* ─── Grid overlay ────────────────────────────────────────────────── */
+body::after {
+  content: "";                                                                        /* Propiedad content: define presentacion visual del bloque. */
+  position: fixed;                                                                    /* Propiedad position: define presentacion visual del bloque. */
+  inset: 0;                                                                           /* Propiedad inset: define presentacion visual del bloque. */
+  background-image:                                                                   /* Propiedad background-image: define presentacion visual del bloque. */
+    linear-gradient(rgba(36,137,230,.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(36,137,230,.04) 1px, transparent 1px);
+  background-size: 40px 40px;                                                         /* Propiedad background-size: define presentacion visual del bloque. */
+  pointer-events: none;                                                               /* Propiedad pointer-events: define presentacion visual del bloque. */
+  z-index: 0;                                                                         /* Propiedad z-index: define presentacion visual del bloque. */
+}
+
+/* ─── Card ─────────────────────────────────────────────────────────── */
+.card {
+  position: relative;                                                                 /* Propiedad position: define presentacion visual del bloque. */
+  z-index: 1;                                                                         /* Propiedad z-index: define presentacion visual del bloque. */
+  background: var(--surface);                                                         /* Propiedad background: define presentacion visual del bloque. */
+  border: 1px solid var(--line);                                                      /* Propiedad border: define presentacion visual del bloque. */
+  border-radius: 18px;                                                                /* Propiedad border-radius: define presentacion visual del bloque. */
+  padding: 48px 40px 40px;                                                            /* Propiedad padding: define presentacion visual del bloque. */
+  width: 400px;                                                                       /* Propiedad width: define presentacion visual del bloque. */
+  max-width: 92vw;                                                                    /* Propiedad max-width: define presentacion visual del bloque. */
+  backdrop-filter: blur(24px);                                                        /* Propiedad backdrop-filter: define presentacion visual del bloque. */
+  -webkit-backdrop-filter: blur(24px);                                                /* Propiedad -webkit-backdrop-filter: define presentacion visual del bloque. */
+  box-shadow:                                                                         /* Propiedad box-shadow: define presentacion visual del bloque. */
+    0 0 0 1px rgba(36,137,230,.07),
+    0 24px 60px rgba(0,18,33,.72),
+    inset 0 1px 0 rgba(255,255,255,.06);
+  animation: cardIn .45s cubic-bezier(.22,1,.36,1) both;                              /* Propiedad animation: define presentacion visual del bloque. */
+}
+
+/* Animacion cardIn: define estados intermedios. */
+@keyframes cardIn {
+  /* Regla CSS: estilo asociado a from. */
+  from { opacity: 0; transform: translateY(18px) scale(.97); }
+  /* Regla CSS: estilo asociado a to. */
+  to   { opacity: 1; transform: none; }
+}
+
+/* Login: tarjeta, bloqueo y controles de acceso. */
+.card.shake {
+  animation: shake .42s cubic-bezier(.36,.07,.19,.97) both;                           /* Propiedad animation: define presentacion visual del bloque. */
+}
+
+/* Animacion shake: define estados intermedios. */
+@keyframes shake {
+  /* Regla CSS: estilo asociado a 10%, 90%. */
+  10%, 90%      { transform: translateX(-2px); }
+  /* Regla CSS: estilo asociado a 20%, 80%. */
+  20%, 80%      { transform: translateX( 4px); }
+  /* Regla CSS: estilo asociado a 30%, 50%, 70%. */
+  30%, 50%, 70% { transform: translateX(-4px); }
+  /* Regla CSS: estilo asociado a 40%, 60%. */
+  40%, 60%      { transform: translateX( 4px); }
+}
+
+/* ─── Brand ─────────────────────────────────────────────────────────── */
+.brand {
+  text-align: center;                                                                 /* Propiedad text-align: define presentacion visual del bloque. */
+  margin-bottom: 36px;                                                                /* Propiedad margin-bottom: define presentacion visual del bloque. */
+}
+
+/* Cabecera: identidad y estado del sistema. */
+.brand img {
+  width: 72px;                                                                        /* Propiedad width: define presentacion visual del bloque. */
+  height: 72px;                                                                       /* Propiedad height: define presentacion visual del bloque. */
+  object-fit: contain;                                                                /* Propiedad object-fit: define presentacion visual del bloque. */
+  margin-bottom: 14px;                                                                /* Propiedad margin-bottom: define presentacion visual del bloque. */
+  filter: drop-shadow(0 0 22px rgba(36,137,230,.55));                                 /* Propiedad filter: define presentacion visual del bloque. */
+  animation: logoGlow 4s ease-in-out infinite alternate;                              /* Propiedad animation: define presentacion visual del bloque. */
+}
+
+/* Animacion logoGlow: define estados intermedios. */
+@keyframes logoGlow {
+  /* Regla CSS: estilo asociado a from. */
+  from { filter: drop-shadow(0 0 14px rgba(36,137,230,.4)); }
+  /* Regla CSS: estilo asociado a to. */
+  to   { filter: drop-shadow(0 0 28px rgba(36,137,230,.7)); }
+}
+
+/* Cabecera: identidad y estado del sistema. */
+.brand h1 {
+  font-size: 26px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  font-weight: 700;                                                                   /* Propiedad font-weight: define presentacion visual del bloque. */
+  letter-spacing: 7px;                                                                /* Propiedad letter-spacing: define presentacion visual del bloque. */
+  color: #fff;                                                                        /* Propiedad color: define presentacion visual del bloque. */
+  text-shadow: 0 0 32px rgba(36,137,230,.55);                                         /* Propiedad text-shadow: define presentacion visual del bloque. */
+}
+
+/* Cabecera: identidad y estado del sistema. */
+.brand p {
+  font-size: 11px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  letter-spacing: 2.5px;                                                              /* Propiedad letter-spacing: define presentacion visual del bloque. */
+  color: var(--muted);                                                                /* Propiedad color: define presentacion visual del bloque. */
+  margin-top: 5px;                                                                    /* Propiedad margin-top: define presentacion visual del bloque. */
+  text-transform: uppercase;                                                          /* Propiedad text-transform: define presentacion visual del bloque. */
+}
+
+/* ─── Divider ─────────────────────────────────────────────────────── */
+.divider {
+  height: 1px;                                                                        /* Propiedad height: define presentacion visual del bloque. */
+  background: linear-gradient(90deg, transparent, var(--line), transparent);          /* Propiedad background: define presentacion visual del bloque. */
+  margin-bottom: 28px;                                                                /* Propiedad margin-bottom: define presentacion visual del bloque. */
+}
+
+/* ─── Form fields ─────────────────────────────────────────────────── */
+.field { margin-bottom: 18px; }
+
+/* Regla CSS: estilo asociado a label. */
+label {
+  display: block;                                                                     /* Propiedad display: define presentacion visual del bloque. */
+  font-size: 11px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  letter-spacing: 1.5px;                                                              /* Propiedad letter-spacing: define presentacion visual del bloque. */
+  color: var(--muted);                                                                /* Propiedad color: define presentacion visual del bloque. */
+  text-transform: uppercase;                                                          /* Propiedad text-transform: define presentacion visual del bloque. */
+  margin-bottom: 7px;                                                                 /* Propiedad margin-bottom: define presentacion visual del bloque. */
+}
+
+input[type="text"],
+/* Regla CSS: estilo asociado a input[type="password"]. */
+input[type="password"] {
+  width: 100%;                                                                        /* Propiedad width: define presentacion visual del bloque. */
+  background: rgba(0,18,33,.65);                                                      /* Propiedad background: define presentacion visual del bloque. */
+  border: 1px solid rgba(36,137,230,.26);                                             /* Propiedad border: define presentacion visual del bloque. */
+  border-radius: 9px;                                                                 /* Propiedad border-radius: define presentacion visual del bloque. */
+  padding: 11px 14px;                                                                 /* Propiedad padding: define presentacion visual del bloque. */
+  color: #e8f0f8;                                                                     /* Propiedad color: define presentacion visual del bloque. */
+  font-size: 14px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  outline: none;                                                                      /* Propiedad outline: define presentacion visual del bloque. */
+  transition: border-color .25s, box-shadow .25s, background .25s;                    /* Propiedad transition: define presentacion visual del bloque. */
+  user-select: text;                                                                  /* Propiedad user-select: define presentacion visual del bloque. */
+}
+
+input[type="text"]:hover,
+/* Regla CSS: estilo asociado a input[type="password"]:hover. */
+input[type="password"]:hover {
+  border-color: rgba(36,137,230,.4);                                                  /* Propiedad border-color: define presentacion visual del bloque. */
+  background: rgba(0,18,33,.75);                                                      /* Propiedad background: define presentacion visual del bloque. */
+}
+
+input[type="text"]:focus,
+/* Regla CSS: estilo asociado a input[type="password"]:focus. */
+input[type="password"]:focus {
+  border-color: var(--vesta-bright);                                                  /* Propiedad border-color: define presentacion visual del bloque. */
+  background: rgba(0,18,33,.8);                                                       /* Propiedad background: define presentacion visual del bloque. */
+  box-shadow: 0 0 0 3px rgba(36,137,230,.15);                                         /* Propiedad box-shadow: define presentacion visual del bloque. */
+}
+
+/* Regla CSS: estilo asociado a input::placeholder. */
+input::placeholder { color: var(--placeholder); }
+
+/* ─── Primary button ─────────────────────────────────────────────── */
+.btn {
+  display: block;                                                                     /* Propiedad display: define presentacion visual del bloque. */
+  width: 100%;                                                                        /* Propiedad width: define presentacion visual del bloque. */
+  margin-top: 8px;                                                                    /* Propiedad margin-top: define presentacion visual del bloque. */
+  padding: 13px;                                                                      /* Propiedad padding: define presentacion visual del bloque. */
+  background: linear-gradient(135deg, var(--vesta) 0%, var(--vesta-bright) 100%);     /* Propiedad background: define presentacion visual del bloque. */
+  border: none;                                                                       /* Propiedad border: define presentacion visual del bloque. */
+  border-radius: 9px;                                                                 /* Propiedad border-radius: define presentacion visual del bloque. */
+  color: #fff;                                                                        /* Propiedad color: define presentacion visual del bloque. */
+  font-size: 13px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  font-weight: 700;                                                                   /* Propiedad font-weight: define presentacion visual del bloque. */
+  letter-spacing: 3px;                                                                /* Propiedad letter-spacing: define presentacion visual del bloque. */
+  text-transform: uppercase;                                                          /* Propiedad text-transform: define presentacion visual del bloque. */
+  cursor: pointer;                                                                    /* Propiedad cursor: define presentacion visual del bloque. */
+  transition: opacity .2s, box-shadow .2s, transform .15s;                            /* Propiedad transition: define presentacion visual del bloque. */
+  position: relative;                                                                 /* Propiedad position: define presentacion visual del bloque. */
+  overflow: hidden;                                                                   /* Propiedad overflow: define presentacion visual del bloque. */
+}
+
+/* Botones: estilo de acciones interactivas. */
+.btn::after {
+  content: "";                                                                        /* Propiedad content: define presentacion visual del bloque. */
+  position: absolute;                                                                 /* Propiedad position: define presentacion visual del bloque. */
+  inset: 0;                                                                           /* Propiedad inset: define presentacion visual del bloque. */
+  background: linear-gradient(135deg, rgba(255,255,255,.1), transparent 60%);         /* Propiedad background: define presentacion visual del bloque. */
+  pointer-events: none;                                                               /* Propiedad pointer-events: define presentacion visual del bloque. */
+}
+
+/* Botones: estilo de acciones interactivas. */
+.btn:hover:not(:disabled) {
+  opacity: .92;                                                                       /* Propiedad opacity: define presentacion visual del bloque. */
+  box-shadow: 0 4px 28px rgba(36,137,230,.45);                                        /* Propiedad box-shadow: define presentacion visual del bloque. */
+  transform: translateY(-1px);                                                        /* Propiedad transform: define presentacion visual del bloque. */
+}
+
+/* Botones: estilo de acciones interactivas. */
+.btn:active:not(:disabled) {
+  opacity: .82;                                                                       /* Propiedad opacity: define presentacion visual del bloque. */
+  transform: translateY(0);                                                           /* Propiedad transform: define presentacion visual del bloque. */
+}
+
+/* Botones: estilo de acciones interactivas. */
+.btn:disabled {
+  opacity: .4;                                                                        /* Propiedad opacity: define presentacion visual del bloque. */
+  cursor: not-allowed;                                                                /* Propiedad cursor: define presentacion visual del bloque. */
+}
+
+/* ─── Error ──────────────────────────────────────────────────────── */
+.error {
+  margin-top: 14px;                                                                   /* Propiedad margin-top: define presentacion visual del bloque. */
+  padding: 10px 14px;                                                                 /* Propiedad padding: define presentacion visual del bloque. */
+  background: var(--error-bg);                                                        /* Propiedad background: define presentacion visual del bloque. */
+  border: 1px solid var(--error-border);                                              /* Propiedad border: define presentacion visual del bloque. */
+  border-radius: 8px;                                                                 /* Propiedad border-radius: define presentacion visual del bloque. */
+  color: var(--error-text);                                                           /* Propiedad color: define presentacion visual del bloque. */
+  font-size: 13px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  text-align: center;                                                                 /* Propiedad text-align: define presentacion visual del bloque. */
+  display: none;                                                                      /* Propiedad display: define presentacion visual del bloque. */
+  animation: fadeIn .2s ease;                                                         /* Propiedad animation: define presentacion visual del bloque. */
+}
+
+/* Animacion fadeIn: define estados intermedios. */
+@keyframes fadeIn {
+  /* Regla CSS: estilo asociado a from. */
+  from { opacity: 0; transform: translateY(-4px); }
+  /* Regla CSS: estilo asociado a to. */
+  to   { opacity: 1; transform: none; }
+}
+
+/* ─── Lockout bar ─────────────────────────────────────────────────── */
+.lockout-bar {
+  height: 3px;                                                                        /* Propiedad height: define presentacion visual del bloque. */
+  background: rgba(36,137,230,.18);                                                   /* Propiedad background: define presentacion visual del bloque. */
+  border-radius: 2px;                                                                 /* Propiedad border-radius: define presentacion visual del bloque. */
+  margin-top: 10px;                                                                   /* Propiedad margin-top: define presentacion visual del bloque. */
+  overflow: hidden;                                                                   /* Propiedad overflow: define presentacion visual del bloque. */
+  display: none;                                                                      /* Propiedad display: define presentacion visual del bloque. */
+}
+
+/* Login: tarjeta, bloqueo y controles de acceso. */
+.lockout-bar-fill {
+  height: 100%;                                                                       /* Propiedad height: define presentacion visual del bloque. */
+  background: linear-gradient(90deg, var(--vesta), var(--vesta-bright));              /* Propiedad background: define presentacion visual del bloque. */
+  transition: width 1s linear;                                                        /* Propiedad transition: define presentacion visual del bloque. */
+}
+
+/* ─── Attempt dots ──────────────────────────────────────────────── */
+.attempt-dots {
+  display: flex;                                                                      /* Propiedad display: define presentacion visual del bloque. */
+  gap: 6px;                                                                           /* Propiedad gap: define presentacion visual del bloque. */
+  justify-content: center;                                                            /* Propiedad justify-content: define presentacion visual del bloque. */
+  margin-top: 12px;                                                                   /* Propiedad margin-top: define presentacion visual del bloque. */
+}
+
+/* Regla CSS: estilo asociado a .dot. */
+.dot {
+  width: 7px; height: 7px;                                                            /* Propiedad width: define presentacion visual del bloque. */
+  border-radius: 50%;                                                                 /* Propiedad border-radius: define presentacion visual del bloque. */
+  background: rgba(36,137,230,.28);                                                   /* Propiedad background: define presentacion visual del bloque. */
+  transition: background .3s, transform .2s;                                          /* Propiedad transition: define presentacion visual del bloque. */
+}
+
+/* Regla CSS: estilo asociado a .dot.used. */
+.dot.used {
+  background: var(--error-text);                                                      /* Propiedad background: define presentacion visual del bloque. */
+  transform: scale(1.2);                                                              /* Propiedad transform: define presentacion visual del bloque. */
+}
+
+/* ─── Separator ──────────────────────────────────────────────────── */
+.sep {
+  display: flex;                                                                      /* Propiedad display: define presentacion visual del bloque. */
+  align-items: center;                                                                /* Propiedad align-items: define presentacion visual del bloque. */
+  gap: 12px;                                                                          /* Propiedad gap: define presentacion visual del bloque. */
+  margin: 22px 0 16px;                                                                /* Propiedad margin: define presentacion visual del bloque. */
+  color: #2a4a68;                                                                     /* Propiedad color: define presentacion visual del bloque. */
+  font-size: 12px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  letter-spacing: 1px;                                                                /* Propiedad letter-spacing: define presentacion visual del bloque. */
+}
+
+.sep::before,
+/* Regla CSS: estilo asociado a .sep::after. */
+.sep::after {
+  content: "";                                                                        /* Propiedad content: define presentacion visual del bloque. */
+  flex: 1;                                                                            /* Propiedad flex: define presentacion visual del bloque. */
+  height: 1px;                                                                        /* Propiedad height: define presentacion visual del bloque. */
+  background: var(--line);                                                            /* Propiedad background: define presentacion visual del bloque. */
+}
+
+/* ─── Guest button ───────────────────────────────────────────────── */
+.btn-guest {
+  display: block;                                                                     /* Propiedad display: define presentacion visual del bloque. */
+  width: 100%;                                                                        /* Propiedad width: define presentacion visual del bloque. */
+  padding: 11px;                                                                      /* Propiedad padding: define presentacion visual del bloque. */
+  background: transparent;                                                            /* Propiedad background: define presentacion visual del bloque. */
+  border: 1px solid rgba(36,137,230,.32);                                             /* Propiedad border: define presentacion visual del bloque. */
+  border-radius: 9px;                                                                 /* Propiedad border-radius: define presentacion visual del bloque. */
+  color: #7a9fc0;                                                                     /* Propiedad color: define presentacion visual del bloque. */
+  font-size: 13px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  font-weight: 500;                                                                   /* Propiedad font-weight: define presentacion visual del bloque. */
+  letter-spacing: 1px;                                                                /* Propiedad letter-spacing: define presentacion visual del bloque. */
+  cursor: pointer;                                                                    /* Propiedad cursor: define presentacion visual del bloque. */
+  transition: border-color .2s, color .2s, background .2s;                            /* Propiedad transition: define presentacion visual del bloque. */
+}
+
+/* Botones: estilo de acciones interactivas. */
+.btn-guest:hover {
+  border-color: var(--vesta-bright);                                                  /* Propiedad border-color: define presentacion visual del bloque. */
+  color: #c2d8f0;                                                                     /* Propiedad color: define presentacion visual del bloque. */
+  background: rgba(36,137,230,.07);                                                   /* Propiedad background: define presentacion visual del bloque. */
+}
+
+/* Botones: estilo de acciones interactivas. */
+.btn-guest:active { background: rgba(36,137,230,.13); }
+
+/* ─── Footer ──────────────────────────────────────────────────────── */
+.footer {
+  text-align: center;                                                                 /* Propiedad text-align: define presentacion visual del bloque. */
+  margin-top: 28px;                                                                   /* Propiedad margin-top: define presentacion visual del bloque. */
+  font-size: 11px;                                                                    /* Propiedad font-size: define presentacion visual del bloque. */
+  color: #2a4a68;                                                                     /* Propiedad color: define presentacion visual del bloque. */
+  letter-spacing: 1px;                                                                /* Propiedad letter-spacing: define presentacion visual del bloque. */
+}
+
+/* ─── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 440px) {
+  /* Login: tarjeta, bloqueo y controles de acceso. */
+  .card {
+    padding: 36px 24px 32px;                                                          /* Propiedad padding: define presentacion visual del bloque. */
+    border-radius: 14px;                                                              /* Propiedad border-radius: define presentacion visual del bloque. */
+  }
+  /* Cabecera: identidad y estado del sistema. */
+  .brand h1   { font-size: 22px; letter-spacing: 5px; }
+  /* Cabecera: identidad y estado del sistema. */
+  .brand img  { width: 60px; height: 60px; }
+}
+
+/* Media query: adapta el layout a ese rango de pantalla. */
+@media (max-height: 600px) and (orientation: landscape) {
+  /* Login: tarjeta, bloqueo y controles de acceso. */
+  .card {
+    padding: 28px 36px 24px;                                                          /* Propiedad padding: define presentacion visual del bloque. */
+  }
+  /* Cabecera: identidad y estado del sistema. */
+  .brand { margin-bottom: 20px; }
+  /* Cabecera: identidad y estado del sistema. */
+  .brand img { width: 50px; height: 50px; margin-bottom: 8px; }
+  /* Regla CSS: estilo asociado a .field. */
+  .field { margin-bottom: 12px; }
+  /* Regla CSS: estilo asociado a .footer. */
+  .footer { margin-top: 16px; }
+}

@@ -1,0 +1,1081 @@
+<!doctype html>
+<!-- Archivo      | technical_V.E.S.T.A..html: consola principal para armado, firmware y calibracion. -->
+<!-- Comentarios de programador: identifican secciones y controles sin cambiar el DOM. -->
+<!-- Documento HTML: raiz con idioma de la interfaz. -->
+<html lang="es">
+<!-- Cabecera HTML: metadatos, titulo y estilos. -->
+<head>
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta charset="utf-8">
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Script: carga la logica cliente asociada. -->
+  <script>if(!sessionStorage.getItem('_vs')){window.location.replace('index.html');}</script>
+  <title>V.E.S.T.A Tecnico | Calibracion</title>
+  <!-- Link: enlaza hoja de estilos del modulo. -->
+  <link rel="stylesheet" href="styles.css?v=firmware-download-20260606">
+</head>
+<!-- Cuerpo HTML: superficie visible de la aplicacion. -->
+<body>
+  <!-- div: contenedor de app-shell. -->
+  <div class="app-shell">
+    <!-- Header: marca y estado operativo. -->
+    <header class="topbar">
+      <!-- div: contenedor de brand. -->
+      <div class="brand">
+        <!-- Button #nav-toggle: accion interactiva de la UI. -->
+        <button class="nav-toggle" id="nav-toggle" aria-label="Abrir navegacion" aria-expanded="false">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="2" y1="4.5"  x2="16" y2="4.5"/>
+            <line x1="2" y1="9"    x2="16" y2="9"/>
+            <line x1="2" y1="13.5" x2="16" y2="13.5"/>
+          </svg>
+        </button>
+        <!-- div: contenedor de brand-mark. -->
+        <div class="brand-mark" aria-hidden="true">
+          <!-- Imagen: activo visual usado por la marca. -->
+          <img src="logo_vesta.png" alt="">
+        </div>
+        <!-- div: contenedor de brand-details. -->
+        <div class="brand-details">
+          <!-- div: contenedor de eyebrow. -->
+          <div class="eyebrow">V.E.S.T.A Tecnico</div>
+          <!-- h1: elemento estructural de la interfaz. -->
+          <h1>Calibracion de Exoesqueleto</h1>
+        </div>
+      </div>
+
+      <!-- div: contenedor de status-strip. -->
+      <div class="status-strip" aria-live="polite">
+        <!-- div: contenedor de status-pill. -->
+        <div class="status-pill" id="s3-status">
+          <span class="dot"></span>
+          <span>ESP32-S3</span>
+          <b>Offline</b>
+        </div>
+        <!-- div: contenedor de status-pill. -->
+        <div class="status-pill" id="cam-status">
+          <span class="dot"></span>
+          <span>ESP32-CAM</span>
+          <b>Offline</b>
+        </div>
+        <!-- div: contenedor de status-pill. -->
+        <div class="status-pill" id="profile-status">
+          <span class="dot"></span>
+          <span>Perfil</span>
+          <b>Sin guardar</b>
+        </div>
+      </div>
+    </header>
+
+    <!-- div: elemento estructural de la interfaz. -->
+    <div id="rail-backdrop" aria-hidden="true"></div>
+
+    <!-- Main: layout principal de navegacion y paneles. -->
+    <main class="layout">
+      <!-- Nav: fases de armado, firmware y calibracion. -->
+      <nav class="rail" aria-label="Fases de armado y calibracion">
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn active" data-panel="armado" title="Armado">
+          <span>01</span>
+          <b>Armado</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="firmware" title="Firmware">
+          <span>02</span>
+          <b>Firmware</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="diagnostico" title="Diagnostico">
+          <span>03</span>
+          <b>Diagnostico</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="servos" title="Servos">
+          <span>04</span>
+          <b>Servos</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="manual" title="Manual">
+          <span>05</span>
+          <b>Manual</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="sensores" title="Sensores">
+          <span>06</span>
+          <b>Sensores</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="mapeo" title="Mapeo">
+          <span>07</span>
+          <b>Mapeo</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="pruebas" title="Pruebas">
+          <span>08</span>
+          <b>Pruebas</b>
+        </button>
+        <!-- Button: accion interactiva de la UI. -->
+        <button class="rail-btn" data-panel="entrega" title="Entrega">
+          <span>09</span>
+          <b>Entrega</b>
+        </button>
+      </nav>
+
+      <!-- Section: panel funcional de la consola. -->
+      <section class="workspace">
+        <!-- Section #panel-armado: panel funcional de la consola. -->
+        <section class="work-panel active" id="panel-armado">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Construccion fisica desde cero</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Armado</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-build-reset: accion interactiva de la UI. -->
+              <button class="btn" id="btn-build-reset" title="Limpiar progreso">Reiniciar</button>
+              <!-- Button #btn-build-complete: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-build-complete" title="Marcar todo">Marcar todo</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de build-grid. -->
+          <div class="build-grid">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>Bill of materials</h3>
+                <span id="bom-count">0/0</span>
+              </div>
+              <!-- div: contenedor de check-list. -->
+              <div class="check-list" id="bom-list"></div>
+            </div>
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>Pasos de armado</h3>
+                <span id="build-step-count">0/0</span>
+              </div>
+              <!-- ol: contenedor de build-steps. -->
+              <ol class="build-steps" id="build-steps"></ol>
+            </div>
+          </div>
+
+          <!-- div: contenedor de phase-summary. -->
+          <div class="phase-summary" id="armado-summary"></div>
+        </section>
+
+        <!-- Section #panel-diagnostico: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-diagnostico">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Banco de instalacion</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Diagnostico</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-stop: accion interactiva de la UI. -->
+              <button class="btn danger" id="btn-stop" title="Paro de emergencia">STOP</button>
+              <!-- Button #btn-reset: accion interactiva de la UI. -->
+              <button class="btn" id="btn-reset" title="Reset seguro">Reset</button>
+              <!-- Button #btn-arm-servos: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-arm-servos" title="Habilitar PWM de servos">Armar</button>
+              <!-- Button #btn-disarm-servos: accion interactiva de la UI. -->
+              <button class="btn" id="btn-disarm-servos" title="Liberar PWM de servos">Desarmar</button>
+              <!-- Button #btn-mode-assisted: accion interactiva de la UI. -->
+              <button class="btn" id="btn-mode-assisted" title="Modo asistido (IMU mueve los servos)">Asistido</button>
+              <!-- Button #btn-mode-automatic: accion interactiva de la UI. -->
+              <button class="btn" id="btn-mode-automatic" title="Modo automatico (servos siguen sensores 1:1)">Automatico</button>
+              <!-- Button #btn-mode-manual-diag: accion interactiva de la UI. -->
+              <button class="btn" id="btn-mode-manual-diag" title="Modo manual (sensores ignorados)">Manual</button>
+              <!-- Button #btn-status: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-status" title="Solicitar estado">Estado</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de diagnostic-grid. -->
+          <div class="diagnostic-grid">
+            <!-- div: contenedor de visual-stage. -->
+            <div class="visual-stage">
+              <!-- Canvas #exo-canvas: superficie grafica para el exoesqueleto. -->
+              <canvas id="exo-canvas" width="980" height="620" aria-label="Vista tecnica del exoesqueleto"></canvas>
+              <!-- div: contenedor de canvas-hud. -->
+              <div class="canvas-hud">
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>Modo</span>
+                  <b id="hud-mode">Manual</b>
+                </div>
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>PWM</span>
+                  <b id="hud-armed">Libre</b>
+                </div>
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>Asistencia</span>
+                  <b id="hud-assist">50%</b>
+                </div>
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>Bateria</span>
+                  <b id="hud-battery">--</b>
+                </div>
+              </div>
+            </div>
+
+            <!-- div: contenedor de check-panel. -->
+            <div class="check-panel">
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>Hardware</h3>
+                <span id="check-count">0/13</span>
+              </div>
+              <!-- div: contenedor de check-list. -->
+              <div class="check-list" id="hardware-checks"></div>
+            </div>
+          </div>
+
+          <!-- div: contenedor de metric-grid. -->
+          <div class="metric-grid" id="live-metrics"></div>
+        </section>
+
+        <!-- Section #panel-servos: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-servos">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">DS51150 150kg/cm 270deg</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Servos</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-manual-mode: accion interactiva de la UI. -->
+              <button class="btn" id="btn-manual-mode">Modo manual</button>
+              <!-- Button #btn-home-all: accion interactiva de la UI. -->
+              <button class="btn" id="btn-home-all">Homes</button>
+              <!-- Button #btn-send-servo-profile: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-send-servo-profile">Enviar servos</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de table-wrap. -->
+          <div class="table-wrap">
+            <!-- table: contenedor de cal-table. -->
+            <table class="cal-table">
+              <!-- thead: elemento estructural de la interfaz. -->
+              <thead>
+                <!-- tr: elemento estructural de la interfaz. -->
+                <tr>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>ID</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Canal</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Articulacion</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Sensor</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Min</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Max</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Home</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Dir</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>PWM 0</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>PWM 270</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Offset</th>
+                  <!-- th: elemento estructural de la interfaz. -->
+                  <th>Prueba</th>
+                </tr>
+              </thead>
+              <!-- tbody: elemento estructural de la interfaz. -->
+              <tbody id="servo-table-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Section #panel-manual: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-manual">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Mover servo individual y verificar grados</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Manual</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-manual-stop: accion interactiva de la UI. -->
+              <button class="btn danger" id="btn-manual-stop" title="Paro de emergencia">STOP</button>
+              <!-- Button #btn-manual-arm: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-manual-arm" title="Habilitar PWM de servos">Armar</button>
+              <!-- Button #btn-manual-disarm: accion interactiva de la UI. -->
+              <button class="btn" id="btn-manual-disarm" title="Liberar PWM de servos">Desarmar</button>
+              <!-- Button #btn-manual-mode-assisted: accion interactiva de la UI. -->
+              <button class="btn" id="btn-manual-mode-assisted" title="IMU mueve los servos">Asistido</button>
+              <!-- Button #btn-manual-mode-automatic: accion interactiva de la UI. -->
+              <button class="btn" id="btn-manual-mode-automatic" title="Sensores 1:1 a servos">Automatico</button>
+              <!-- Button #btn-manual-mode-only: accion interactiva de la UI. -->
+              <button class="btn" id="btn-manual-mode-only" title="Solo comandos manuales">Manual</button>
+              <!-- Button #btn-manual-home-all: accion interactiva de la UI. -->
+              <button class="btn" id="btn-manual-home-all" title="Llevar todos a home">Home todos</button>
+              <!-- Button #btn-manual-sweep-all: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-manual-sweep-all" title="Barrido completo de todos">Sweep</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de manual-grid. -->
+          <div class="manual-grid">
+            <!-- div: contenedor de visual-stage. -->
+            <div class="visual-stage manual-stage">
+              <!-- Canvas #exo-canvas-manual: superficie grafica para el exoesqueleto. -->
+              <canvas id="exo-canvas-manual" width="980" height="620" aria-label="Vista tecnica del exoesqueleto en modo manual"></canvas>
+              <!-- div: contenedor de canvas-hud. -->
+              <div class="canvas-hud">
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>Conexion</span>
+                  <b id="manual-hud-conn">Offline</b>
+                </div>
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>Ultimo</span>
+                  <b id="manual-hud-last">--</b>
+                </div>
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>Modo</span>
+                  <b id="manual-hud-mode">manual</b>
+                </div>
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <span>PWM</span>
+                  <b id="manual-hud-armed">Libre</b>
+                </div>
+              </div>
+            </div>
+
+            <!-- div: contenedor de manual-controls. -->
+            <div class="manual-controls" id="manual-controls" aria-label="Controles manuales por servo"></div>
+          </div>
+        </section>
+
+        <!-- Section #panel-sensores: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-sensores">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">4 MPU6050 + 2 AS5600</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Sensores</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-calibrate-imu: accion interactiva de la UI. -->
+              <button class="btn" id="btn-calibrate-imu">Calibrar IMU</button>
+              <!-- Button #btn-capture-neutral: accion interactiva de la UI. -->
+              <button class="btn" id="btn-capture-neutral">Neutral todos</button>
+              <!-- Button #btn-send-sensor-profile: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-send-sensor-profile">Enviar sensores</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de sensor-layout. -->
+          <div class="sensor-layout">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>MPU6050</h3>
+                <span>TCA9548A buses 0-3</span>
+              </div>
+              <!-- div: contenedor de sensor-grid. -->
+              <div class="sensor-grid" id="imu-grid"></div>
+            </div>
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>AS5600</h3>
+                <span>I2C TCA4 / TCA5</span>
+              </div>
+              <!-- div: contenedor de sensor-grid. -->
+              <div class="sensor-grid" id="as5600-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section #panel-mapeo: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-mapeo">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Asistencia y protecciones</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Mapeo</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-test-map: accion interactiva de la UI. -->
+              <button class="btn" id="btn-test-map">Probar mapeo</button>
+              <!-- Button #btn-send-map-profile: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-send-map-profile">Enviar mapeo</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de mapping-layout. -->
+          <div class="mapping-layout">
+            <!-- div: contenedor de tuning-panel. -->
+            <div class="tuning-panel">
+              <label class="control-line">
+                <span>Asistencia</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input type="range" id="assist-level" min="0" max="1" step="0.05" value="0.5">
+                <b id="assist-label">50%</b>
+              </label>
+              <label class="control-line">
+                <span>Zona muerta</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input type="range" id="deadband" min="0" max="8" step="0.5" value="2">
+                <b id="deadband-label">2 deg</b>
+              </label>
+              <label class="control-line">
+                <span>Suavizado</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input type="range" id="smoothing" min="0.05" max="1" step="0.05" value="1">
+                <b id="smoothing-label">1</b>
+              </label>
+              <label class="control-line">
+                <span>Velocidad max</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input type="range" id="max-speed" min="30" max="2400" step="10" value="2400">
+                <b id="speed-label">2400 deg/s</b>
+              </label>
+            </div>
+
+            <!-- div: contenedor de mapping-list. -->
+            <div class="mapping-list" id="mapping-list"></div>
+          </div>
+        </section>
+
+        <!-- Section #panel-pruebas: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-pruebas">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Verificacion previa a entrega</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Pruebas</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-tests-reset: accion interactiva de la UI. -->
+              <button class="btn" id="btn-tests-reset" title="Borrar resultados">Reiniciar</button>
+              <!-- Button #btn-tests-run-all: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-tests-run-all" title="Ejecutar todas">Ejecutar todas</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de tests-grid. -->
+          <div class="tests-grid">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>Suite automatica</h3>
+                <span id="tests-summary">0/0</span>
+              </div>
+              <!-- div: contenedor de test-list. -->
+              <div class="test-list" id="test-list"></div>
+            </div>
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- div: contenedor de subhead. -->
+              <div class="subhead">
+                <!-- h3: elemento estructural de la interfaz. -->
+                <h3>Bitacora</h3>
+                <span id="tests-last-run">Sin ejecuciones</span>
+              </div>
+              <!-- pre: contenedor de test-log. -->
+              <pre class="test-log" id="test-log" aria-live="polite"></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section #panel-entrega: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-entrega">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Perfil local de distribucion</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Entrega</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-copy-profile: accion interactiva de la UI. -->
+              <button class="btn" id="btn-copy-profile">Copiar JSON</button>
+              <!-- Button #btn-download-profile: accion interactiva de la UI. -->
+              <button class="btn" id="btn-download-profile">Descargar</button>
+              <!-- Button #btn-send-profile: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-send-profile">Enviar perfil</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de readiness-gate. -->
+          <div class="readiness-gate" id="readiness-gate"></div>
+
+          <!-- div: contenedor de handoff-grid. -->
+          <div class="handoff-grid">
+            <!-- div: contenedor de form-panel. -->
+            <div class="form-panel">
+              <label>
+                <span>Serie exoesqueleto</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input id="exo-serial" type="text" autocomplete="off" placeholder="VESTA-0001">
+              </label>
+              <label>
+                <span>Tecnico</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input id="tech-name" type="text" autocomplete="off" placeholder="Nombre">
+              </label>
+              <label>
+                <span>Cliente local</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input id="client-name" type="text" autocomplete="off" placeholder="Cliente">
+              </label>
+              <label>
+                <span>Firmware ESP32-S3</span>
+                <!-- input: campo de entrada para datos tecnicos. -->
+                <input id="firmware-version" type="text" autocomplete="off" placeholder="VESTA-REAL-2.0">
+              </label>
+              <label>
+                <span>Notas tecnicas</span>
+                <!-- textarea: campo de entrada para datos tecnicos. -->
+                <textarea id="handoff-notes" rows="6" placeholder="Ajustes mecanicos, correas, topes, pruebas de carga"></textarea>
+              </label>
+            </div>
+            <!-- div: contenedor de profile-panel. -->
+            <div class="profile-panel">
+              <!-- div: contenedor de profile-toolbar. -->
+              <div class="profile-toolbar">
+                <span id="profile-size">0 KB</span>
+                <span id="profile-updated">Pendiente</span>
+              </div>
+              <!-- pre: elemento estructural de la interfaz. -->
+              <pre id="profile-preview" aria-label="Perfil JSON de calibracion"></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section #panel-firmware: panel funcional de la consola. -->
+        <section class="work-panel" id="panel-firmware">
+          <!-- div: contenedor de panel-head. -->
+          <div class="panel-head">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div>
+              <!-- p: contenedor de section-kicker. -->
+              <p class="section-kicker">Carga local por arduino-cli</p>
+              <!-- h2: elemento estructural de la interfaz. -->
+              <h2>Firmware</h2>
+            </div>
+            <!-- div: contenedor de action-row. -->
+            <div class="action-row">
+              <!-- Button #btn-refresh-ports: accion interactiva de la UI. -->
+              <button class="btn" id="btn-refresh-ports">Detectar puertos</button>
+              <!-- Button #btn-arduino-status: accion interactiva de la UI. -->
+              <button class="btn primary" id="btn-arduino-status">Arduino CLI</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de firmware-quick. -->
+          <div class="firmware-quick" data-device="s3">
+            <div class="firmware-quick-copy">
+              <p class="section-kicker">Carga rapida</p>
+              <h3>ESP32-S3</h3>
+              <span id="fw-quick-source-s3">esp32_s3_controller.ino</span>
+            </div>
+            <div class="firmware-quick-flow" aria-live="polite">
+              <span class="firmware-step active" id="fw-step-detect-s3">COM</span>
+              <span class="firmware-step" id="fw-step-compile-s3">Compilar</span>
+              <span class="firmware-step" id="fw-step-upload-s3">Subir</span>
+            </div>
+            <label class="firmware-quick-port">
+              <span>Puerto</span>
+              <select id="fw-quick-port-s3">
+                <option value="">Auto</option>
+              </select>
+            </label>
+            <div class="firmware-quick-actions">
+              <span class="device-badge" id="fw-quick-status-s3">Listo</span>
+              <button class="btn" id="btn-s3-quick-verify" type="button">Verificar</button>
+              <button class="btn primary" id="btn-s3-quick-upload" type="button">Subir S3</button>
+            </div>
+          </div>
+
+          <div class="firmware-quick" data-device="cam">
+            <div class="firmware-quick-copy">
+              <p class="section-kicker">Carga rapida</p>
+              <h3>ESP32-CAM</h3>
+              <span id="fw-quick-source-cam">esp32_cam_assistant.ino</span>
+            </div>
+            <div class="firmware-quick-flow" aria-live="polite">
+              <span class="firmware-step active" id="fw-step-detect-cam">COM</span>
+              <span class="firmware-step" id="fw-step-compile-cam">Compilar</span>
+              <span class="firmware-step" id="fw-step-upload-cam">Subir</span>
+            </div>
+            <label class="firmware-quick-port">
+              <span>Puerto</span>
+              <select id="fw-quick-port-cam">
+                <option value="">Auto</option>
+              </select>
+            </label>
+            <div class="firmware-quick-actions">
+              <span class="device-badge" id="fw-quick-status-cam">Listo</span>
+              <button class="btn" id="btn-cam-quick-verify" type="button">Verificar</button>
+              <button class="btn primary" id="btn-cam-quick-upload" type="button">Subir CAM</button>
+            </div>
+          </div>
+
+          <!-- div: contenedor de firmware-grid. -->
+          <div class="firmware-grid">
+            <!-- article: contenedor de firmware-card. -->
+            <article class="firmware-card" data-device="s3">
+              <!-- div: contenedor de firmware-head. -->
+              <div class="firmware-head">
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <!-- p: contenedor de section-kicker. -->
+                  <p class="section-kicker">Control principal</p>
+                  <!-- h3: elemento estructural de la interfaz. -->
+                  <h3>ESP32-S3 N16R8</h3>
+                </div>
+                <span class="device-badge" id="fw-status-s3">Pendiente</span>
+              </div>
+
+              <!-- div: contenedor de firmware-form. -->
+              <div class="firmware-form">
+                <label>
+                  <span>Archivo .ino</span>
+                  <!-- input: campo de entrada para datos tecnicos. -->
+                  <input type="file" id="fw-file-s3" accept=".ino,.cpp,.h,.txt">
+                </label>
+                <label>
+                  <span>FQBN</span>
+                  <!-- input: campo de entrada para datos tecnicos. -->
+                  <input id="fw-fqbn-s3" type="text" value="esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=default,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB" spellcheck="false">
+                </label>
+                <label>
+                  <span>Puerto</span>
+                  <!-- select: campo de entrada para datos tecnicos. -->
+                  <select id="fw-port-s3">
+                    <option value="">Seleccionar</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="firmware-code-head">
+                <div>
+                  <span>Codigo actual</span>
+                  <b id="fw-code-name-s3">esp32_s3_controller.ino</b>
+                </div>
+                <button class="btn" data-fw-action="download" data-device="s3" type="button">Descargar .ino</button>
+              </div>
+
+              <!-- textarea: campo de entrada para datos tecnicos. -->
+              <textarea id="fw-code-s3" class="code-editor" spellcheck="false" placeholder="// Firmware ESP32-S3"></textarea>
+
+              <!-- div: contenedor de action-row. -->
+              <div class="action-row">
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn" data-fw-action="bundled" data-device="s3">Firmware</button>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn" data-fw-action="clear" data-device="s3">Limpiar</button>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn" data-fw-action="verify" data-device="s3">Verificar</button>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn primary" data-fw-action="upload" data-device="s3">Subir S3</button>
+              </div>
+            </article>
+
+            <!-- article: contenedor de firmware-card. -->
+            <article class="firmware-card" data-device="cam">
+              <!-- div: contenedor de firmware-head. -->
+              <div class="firmware-head">
+                <!-- div: elemento estructural de la interfaz. -->
+                <div>
+                  <!-- p: contenedor de section-kicker. -->
+                  <p class="section-kicker">Vision auxiliar</p>
+                  <!-- h3: elemento estructural de la interfaz. -->
+                  <h3>ESP32-CAM</h3>
+                </div>
+                <span class="device-badge" id="fw-status-cam">Pendiente</span>
+              </div>
+
+              <!-- div: contenedor de firmware-form. -->
+              <div class="firmware-form">
+                <label>
+                  <span>Archivo .ino</span>
+                  <!-- input: campo de entrada para datos tecnicos. -->
+                  <input type="file" id="fw-file-cam" accept=".ino,.cpp,.h,.txt">
+                </label>
+                <label>
+                  <span>FQBN</span>
+                  <!-- input: campo de entrada para datos tecnicos. -->
+                  <input id="fw-fqbn-cam" type="text" value="esp32:esp32:esp32cam" spellcheck="false">
+                </label>
+                <label>
+                  <span>Puerto</span>
+                  <!-- select: campo de entrada para datos tecnicos. -->
+                  <select id="fw-port-cam">
+                    <option value="">Seleccionar</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="firmware-code-head">
+                <div>
+                  <span>Codigo actual</span>
+                  <b id="fw-code-name-cam">esp32_cam_assistant.ino</b>
+                </div>
+                <button class="btn" data-fw-action="download" data-device="cam" type="button">Descargar .ino</button>
+              </div>
+
+              <!-- textarea: campo de entrada para datos tecnicos. -->
+              <textarea id="fw-code-cam" class="code-editor" spellcheck="false" placeholder="// Firmware ESP32-CAM"></textarea>
+
+              <!-- div: contenedor de action-row. -->
+              <div class="action-row">
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn" data-fw-action="bundled" data-device="cam">Firmware</button>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn" data-fw-action="clear" data-device="cam">Limpiar</button>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn" data-fw-action="verify" data-device="cam">Verificar</button>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn primary" data-fw-action="upload" data-device="cam">Subir CAM</button>
+              </div>
+            </article>
+          </div>
+
+          <!-- div: contenedor de firmware-console. -->
+          <div class="firmware-console">
+            <!-- div: contenedor de profile-toolbar. -->
+            <div class="profile-toolbar">
+              <span id="fw-cli-status">Sin consultar</span>
+              <span id="fw-last-action">Pendiente</span>
+            </div>
+            <!-- pre: elemento estructural de la interfaz. -->
+            <pre id="fw-output"></pre>
+          </div>
+        </section>
+      </section>
+
+      <!-- aside: contenedor de side-panel. -->
+      <aside class="side-panel">
+        <!-- Section: panel funcional de la consola. -->
+        <section class="connect-panel">
+          <!-- div: contenedor de subhead. -->
+          <div class="subhead compact">
+            <!-- h3: elemento estructural de la interfaz. -->
+            <h3>ESP32-S3</h3>
+            <span>WebSocket / COM</span>
+          </div>
+          <label class="field">
+            <span>URL</span>
+            <!-- input: campo de entrada para datos tecnicos. -->
+            <input id="s3-url" type="url" value="ws://192.168.1.100:81" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>Puerto COM</span>
+            <!-- select: campo de entrada para datos tecnicos. -->
+            <select id="s3-port">
+              <option value="">Pulsa Detectar</option>
+            </select>
+          </label>
+          <!-- div: contenedor de button-grid. -->
+          <div class="button-grid">
+            <!-- Button #btn-refresh-connection-ports: accion interactiva de la UI. -->
+            <button class="btn" id="btn-refresh-connection-ports" title="Detectar puertos COM">Detectar</button>
+            <!-- Button #btn-connect-s3-serial: accion interactiva de la UI. -->
+            <button class="btn primary" id="btn-connect-s3-serial" title="Conectar por puerto COM">Conectar COM</button>
+            <!-- Button #btn-connect-s3: accion interactiva de la UI. -->
+            <button class="btn" id="btn-connect-s3" title="Conectar por WebSocket">Conectar URL</button>
+            <!-- Button #btn-connect-s3-battery: accion interactiva de la UI. -->
+            <button class="btn" id="btn-connect-s3-battery" title="Conectar al AP de respaldo del S3 en bateria">Bateria AP</button>
+            <!-- Button #btn-disconnect-s3: accion interactiva de la UI. -->
+            <button class="btn" id="btn-disconnect-s3" title="Desconectar ESP32-S3">Desconectar</button>
+          </div>
+          <!-- div: contenedor de serial-monitor-panel. -->
+          <div class="serial-monitor-panel">
+            <div class="serial-monitor-head">
+              <span>Monitor serie</span>
+              <button class="btn" id="btn-clear-serial-monitor" type="button" title="Limpiar monitor serie">Limpiar</button>
+            </div>
+            <!-- pre: contenedor de serial-monitor. -->
+            <pre id="serial-monitor" class="serial-monitor" aria-live="polite"></pre>
+          </div>
+          <!-- div: contenedor de i2c-diagnostic. -->
+          <div class="i2c-diagnostic" id="i2c-diagnostic">
+            <!-- div: contenedor de i2c-diagnostic-head. -->
+            <div class="i2c-diagnostic-head">
+              <span>I2C / MPU</span>
+              <b id="i2c-diag-status">Sin datos</b>
+            </div>
+            <!-- div: contenedor de i2c-diagnostic-meta. -->
+            <div class="i2c-diagnostic-meta">
+              <span>Root</span>
+              <b id="i2c-root-devices">Pendiente</b>
+            </div>
+            <!-- div: contenedor de i2c-channel-list. -->
+            <div class="i2c-channel-list" id="i2c-channel-list" aria-live="polite"></div>
+            <!-- Button #btn-i2c-diag: accion interactiva de la UI. -->
+            <button class="btn" id="btn-i2c-diag" type="button" title="Pedir diagnostico I2C al ESP32-S3">Diagnosticar I2C</button>
+            <!-- pre: contenedor de i2c-serial-monitor. -->
+            <pre id="i2c-serial-monitor" class="i2c-serial-monitor" aria-live="polite"></pre>
+          </div>
+        </section>
+
+        <!-- Section: panel funcional de la consola. -->
+        <section class="connect-panel camera-panel">
+          <!-- div: contenedor de subhead. -->
+          <div class="subhead compact">
+            <!-- h3: elemento estructural de la interfaz. -->
+            <h3>ESP32-CAM</h3>
+            <span>Stream</span>
+          </div>
+          <label class="field">
+            <span>URL / USB</span>
+            <!-- input: campo de entrada para datos tecnicos. -->
+            <input id="cam-url" type="url" value="http://192.168.1.101/stream" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>Puerto COM</span>
+            <!-- select: campo de entrada para datos tecnicos. -->
+            <select id="cam-port">
+              <option value="">Pulsa Detectar CAM</option>
+            </select>
+          </label>
+          <!-- div: contenedor de camera-box. -->
+          <div class="camera-box">
+            <!-- Button #btn-cam-manual-com: accion interactiva de la UI. -->
+            <button class="cam-manual-com" id="btn-cam-manual-com" type="button" title="Elegir COM manualmente sin detector" aria-label="Elegir COM manualmente">COM</button>
+            <!-- div: contenedor de cam-manual-menu. -->
+            <div class="cam-manual-menu" id="cam-manual-menu" hidden>
+              <!-- Form #cam-manual-form: captura datos del usuario. -->
+              <form class="cam-manual-form" id="cam-manual-form">
+                <label>
+                  <span>Puerto</span>
+                  <!-- input: campo de entrada para datos tecnicos. -->
+                  <input id="cam-manual-port-input" type="text" placeholder="COM7" spellcheck="false" autocomplete="off">
+                </label>
+                <!-- Button: accion interactiva de la UI. -->
+                <button class="btn primary" type="submit">Usar</button>
+              </form>
+              <!-- div: contenedor de cam-manual-list. -->
+              <div class="cam-manual-list" id="cam-manual-port-list" role="listbox" aria-label="Puerto COM de la ESP32-CAM">
+                <!-- div: contenedor de cam-manual-empty. -->
+                <div class="cam-manual-empty">Escribe COM</div>
+              </div>
+            </div>
+            <!-- Imagen: activo visual usado por la marca. -->
+            <img id="cam-stream" alt="Stream ESP32-CAM">
+            <!-- div: elemento estructural de la interfaz. -->
+            <div id="cam-placeholder">CAM</div>
+          </div>
+          <!-- div: contenedor de button-grid. -->
+          <div class="button-grid cam-control-grid">
+            <!-- Button #btn-refresh-cam-ports: accion interactiva de la UI. -->
+            <button class="btn" id="btn-refresh-cam-ports" title="Buscar ESP32-CAM y abrir video automaticamente">Detectar e iniciar</button>
+            <!-- Button #btn-connect-cam-serial: accion interactiva de la UI. -->
+            <button class="btn primary" id="btn-connect-cam-serial" title="Abrir video por el puerto COM seleccionado">Conectar COM</button>
+            <!-- Button #btn-start-cam: accion interactiva de la UI. -->
+            <button class="btn primary" id="btn-start-cam" title="Abrir stream desde la URL actual">Iniciar URL</button>
+            <!-- Button #btn-stop-cam: accion interactiva de la UI. -->
+            <button class="btn" id="btn-stop-cam" title="Detener stream de la camara">Detener</button>
+            <button class="btn" id="btn-cam-record" title="Grabar el stream en este navegador">Grabar</button>
+            <!-- Button #btn-cam-mode-fast: accion interactiva de la UI. -->
+            <button class="btn" id="btn-cam-mode-fast" title="Baja resolucion y mayor fluidez">Rapido</button>
+            <!-- Button #btn-cam-mode-balanced: accion interactiva de la UI. -->
+            <button class="btn primary" id="btn-cam-mode-balanced" title="Balance de calidad y fluidez">Equilibrado</button>
+            <!-- Button #btn-cam-mode-quality: accion interactiva de la UI. -->
+            <button class="btn" id="btn-cam-mode-quality" title="Mejor imagen con menos FPS">Calidad</button>
+            <!-- Button #btn-cam-flash-off: accion interactiva de la UI. -->
+            <button class="btn" id="btn-cam-flash-off" title="Apagar flash de la ESP32-CAM">Flash OFF</button>
+            <!-- Button #btn-cam-flash-on: accion interactiva de la UI. -->
+            <button class="btn" id="btn-cam-flash-on" title="Encender flash de la ESP32-CAM">Flash ON</button>
+          </div>
+        </section>
+
+        <!-- Section: panel funcional de la consola. -->
+        <section class="connect-panel">
+          <!-- div: contenedor de subhead. -->
+          <div class="subhead compact">
+            <!-- h3: elemento estructural de la interfaz. -->
+            <h3>Sesion</h3>
+            <span id="session-clock">00:00</span>
+          </div>
+          <!-- div: contenedor de button-grid. -->
+          <div class="button-grid">
+            <!-- Button #btn-demo: accion interactiva de la UI. -->
+            <button class="btn" id="btn-demo" title="Modo demo (sin hardware)">Demo</button>
+            <!-- Button #btn-save-local: accion interactiva de la UI. -->
+            <button class="btn" id="btn-save-local" title="Guardar perfil en este equipo">Guardar local</button>
+          </div>
+          <!-- div: contenedor de log. -->
+          <div class="log" id="event-log" aria-live="polite"></div>
+        </section>
+      </aside>
+    </main>
+
+    <!-- footer: contenedor de app-footer. -->
+    <footer class="app-footer mode-manual" aria-label="Estado de la herramienta">
+      <!-- div: contenedor de footer-left. -->
+      <div class="footer-left">
+        <span class="footer-brand">V.E.S.T.A TECH CONSOLE</span>
+        <span class="footer-mode-pill">Modo <b id="footer-mode">Manual</b></span>
+        <span>v1.0</span>
+        <span id="footer-panel">Diagnostico</span>
+      </div>
+      <!-- div: contenedor de footer-center. -->
+      <div class="footer-center">
+        <span>S3 <b id="footer-s3">Offline</b></span>
+        <span>CAM <b id="footer-cam">Offline</b></span>
+        <span>Perfil <b id="footer-profile">Sin guardar</b></span>
+      </div>
+      <!-- div: contenedor de footer-right. -->
+      <div class="footer-right">
+        <span>Sesion <b id="footer-session">00:00</b></span>
+        <span>Paquetes <b id="footer-packets">0</b></span>
+        <span>Localhost <b id="footer-local-port">5177</b></span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- ESP detection alert: pops up when a new COM port appears -->
+  <div class="esp-alert-backdrop" id="esp-alert-backdrop" hidden>
+    <!-- div: contenedor de esp-alert. -->
+    <div class="esp-alert" role="dialog" aria-modal="true" aria-labelledby="esp-alert-title">
+      <!-- Header: marca y estado operativo. -->
+      <header class="esp-alert-head">
+        <!-- div: contenedor de esp-alert-dot. -->
+        <div class="esp-alert-dot" aria-hidden="true"></div>
+        <!-- div: elemento estructural de la interfaz. -->
+        <div>
+          <!-- h3: elemento estructural de la interfaz. -->
+          <h3 id="esp-alert-title">Nuevo dispositivo ESP detectado</h3>
+          <!-- p: contenedor de esp-alert-sub. -->
+          <p class="esp-alert-sub" id="esp-alert-sub">Se conectó un nuevo COM al equipo.</p>
+        </div>
+        <!-- Button #esp-alert-close: accion interactiva de la UI. -->
+        <button class="esp-alert-close" id="esp-alert-close" type="button" aria-label="Cerrar">&times;</button>
+      </header>
+      <!-- div: contenedor de esp-alert-body. -->
+      <div class="esp-alert-body">
+        <!-- div: contenedor de esp-alert-row. -->
+        <div class="esp-alert-row"><span>Puerto</span><b id="esp-alert-port">COM?</b></div>
+        <!-- div: contenedor de esp-alert-row. -->
+        <div class="esp-alert-row"><span>Tipo</span><b id="esp-alert-kind">Serial</b></div>
+        <!-- div: contenedor de esp-alert-row. -->
+        <div class="esp-alert-row"><span>Detectado como</span><b id="esp-alert-guess">Desconocido</b></div>
+        <!-- div: contenedor de esp-alert-row. -->
+        <div class="esp-alert-row esp-alert-row-multiline"><span>Descripción</span><b id="esp-alert-desc">—</b></div>
+      </div>
+      <!-- div: contenedor de esp-alert-actions. -->
+      <div class="esp-alert-actions">
+        <!-- Button #esp-alert-connect: accion interactiva de la UI. -->
+        <button class="btn primary" id="esp-alert-connect" type="button">Conectar</button>
+        <!-- Button #esp-alert-upload: accion interactiva de la UI. -->
+        <button class="btn" id="esp-alert-upload" type="button">Subir firmware</button>
+        <!-- Button #esp-alert-ignore: accion interactiva de la UI. -->
+        <button class="btn esp-alert-ignore" id="esp-alert-ignore" type="button">Ignorar</button>
+      </div>
+      <!-- div: contenedor de esp-alert-foot. -->
+      <div class="esp-alert-foot">
+        <label class="esp-alert-remember">
+          <!-- input: campo de entrada para datos tecnicos. -->
+          <input type="checkbox" id="esp-alert-remember">
+          <span>No volver a preguntar por este puerto en esta sesión</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Script: carga la logica cliente asociada. -->
+  <script src="app.js?v=firmware-editor-20260606"></script>
+  <!-- Script: carga la logica cliente asociada. -->
+  <script>
+    (function () {
+      const toggle   = document.getElementById('nav-toggle');
+      const backdrop = document.getElementById('rail-backdrop');
+      const rail     = document.querySelector('.rail');
+
+      function openNav() {
+        rail.classList.add('open');
+        backdrop.classList.add('show');
+        toggle.setAttribute('aria-expanded', 'true');
+        document.body.style.overflow = '';
+      }
+
+      function closeNav() {
+        rail.classList.remove('open');
+        backdrop.classList.remove('show');
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+
+      toggle.addEventListener('click', function () {
+        rail.classList.contains('open') ? closeNav() : openNav();
+      });
+
+      backdrop.addEventListener('click', closeNav);
+
+      rail.querySelectorAll('.rail-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (window.innerWidth <= 640) closeNav();
+        });
+      });
+
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeNav();
+      });
+    })();
+  </script>
+</body>
+</html>

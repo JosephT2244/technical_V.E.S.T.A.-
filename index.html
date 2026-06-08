@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<!-- Archivo      | index.html: pantalla de acceso y carga inicial del sistema tecnico. -->
+<!-- Comentarios de programador: identifican secciones y controles sin cambiar el DOM. -->
+<!-- Documento HTML: raiz con idioma de la interfaz. -->
+<html lang="es">
+<!-- Cabecera HTML: metadatos, titulo y estilos. -->
+<head>
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta charset="UTF-8">
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <!-- Meta: configura navegador, viewport o robots. -->
+  <meta name="robots" content="noindex, nofollow">
+  <title>V.E.S.T.A — Acceso</title>
+  <!-- Link: enlaza hoja de estilos del modulo. -->
+  <link rel="stylesheet" href="login.css">
+</head>
+<!-- Cuerpo HTML: superficie visible de la aplicacion. -->
+<body>
+  <!-- div: contenedor de card. -->
+  <div class="card">
+
+    <!-- div: contenedor de brand. -->
+    <div class="brand">
+      <!-- Imagen: activo visual usado por la marca. -->
+      <img src="logo_vesta.png" alt="V.E.S.T.A">
+      <!-- h1: elemento estructural de la interfaz. -->
+      <h1>V.E.S.T.A</h1>
+      <!-- p: elemento estructural de la interfaz. -->
+      <p>Sistema Técnico de Calibración</p>
+    </div>
+
+    <!-- div: contenedor de divider. -->
+    <div class="divider"></div>
+
+    <!-- Form #loginForm: captura datos del usuario. -->
+    <form id="loginForm" autocomplete="off" novalidate>
+      <!-- div: contenedor de field. -->
+      <div class="field">
+        <label for="uInput">Usuario</label>
+        <!-- input: campo de entrada para datos tecnicos. -->
+        <input type="text"
+               id="uInput"
+               name="username"
+               placeholder="Ingresa tu usuario"
+               autocomplete="username"
+               maxlength="64"
+               spellcheck="false"
+               autofocus>
+      </div>
+      <!-- div: contenedor de field. -->
+      <div class="field">
+        <label for="pInput">Contraseña</label>
+        <!-- input: campo de entrada para datos tecnicos. -->
+        <input type="password"
+               id="pInput"
+               name="password"
+               placeholder="Ingresa tu contraseña"
+               autocomplete="current-password"
+               maxlength="64">
+      </div>
+
+      <!-- Button #loginBtn: accion interactiva de la UI. -->
+      <button class="btn" type="submit" id="loginBtn">Ingresar</button>
+
+      <!-- div: contenedor de error. -->
+      <div class="error" id="errMsg" role="alert" aria-live="assertive"></div>
+
+      <!-- div: contenedor de lockout-bar. -->
+      <div class="lockout-bar" id="lockoutBar">
+        <!-- div: contenedor de lockout-bar-fill. -->
+        <div class="lockout-bar-fill" id="lockoutFill" style="width:100%"></div>
+      </div>
+
+      <!-- div: contenedor de attempt-dots. -->
+      <div class="attempt-dots" aria-hidden="true">
+        <!-- div: contenedor de dot. -->
+        <div class="dot"></div>
+        <!-- div: contenedor de dot. -->
+        <div class="dot"></div>
+        <!-- div: contenedor de dot. -->
+        <div class="dot"></div>
+        <!-- div: contenedor de dot. -->
+        <div class="dot"></div>
+        <!-- div: contenedor de dot. -->
+        <div class="dot"></div>
+      </div>
+    </form>
+
+    <!-- div: contenedor de sep. -->
+    <div class="sep"><span>o</span></div>
+
+    <!-- Button #guestBtn: accion interactiva de la UI. -->
+    <button class="btn-guest" type="button" id="guestBtn">
+      Continuar como Invitado
+    </button>
+
+    <!-- div: contenedor de footer. -->
+    <div class="footer">V.E.S.T.A &copy; 2026 &mdash; Acceso Restringido</div>
+  </div>
+
+  <!-- Script: carga credenciales privadas locales si existen. -->
+  <script src="credentials.js"></script>
+  <!-- Script: carga la logica cliente asociada. -->
+  <script src="login.js"></script>
+</body>
+</html>
