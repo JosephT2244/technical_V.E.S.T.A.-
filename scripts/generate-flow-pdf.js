@@ -136,7 +136,7 @@ const diagrams = [
       ${cluster("hardware", "Hardware V.E.S.T.A", `
         ${node("s3", "ESP32-S3\\nesp32_s3_controller.ino\\nSensores, servos, BLE, WS", { fill: "#ecfff5" })}
         ${node("cam", "ESP32-CAM\\nesp32_cam_assistant.ino\\nVideo, audio, estado", { fill: "#ecfff5" })}
-        ${node("act", "PCA9685 + 6 servos\\nTCA9548A + 4 MPU6050\\n2 AS5600 + estop", { fill: "#f4fff8" })}
+        ${node("act", "PCA9685 + 6 servos\\nTCA9548A + 4 MPU6050\\n4 botones N.A.", { fill: "#f4fff8" })}
       `)}
       ${edge("login", "ui", "sesion _vs")}
       ${edge("ui", "srv", "fetch /api")}
@@ -188,7 +188,7 @@ const diagrams = [
     dot: graph("client_init", `
       ${node("guard", "HTML valida sessionStorage _vs\\nsi falta: index.html")}
       ${node("module", "app.js IIFE\\n'use strict'")}
-      ${node("defaults", "SERVO_DEFAULTS\\nIMU_DEFAULTS\\nAS5600_DEFAULTS\\nBOM / TEST_DEFS")}
+      ${node("defaults", "SERVO_DEFAULTS\\nIMU_DEFAULTS\\nBUTTON_DEFAULTS\\nBOM / TEST_DEFS")}
       ${node("state", "defaultState()\\nloadState()\\nhydrateState()")}
       ${node("hydrate", "hydrateInputs()\\nupdateTuningLabels()\\nsetDisplayedMode()")}
       ${node("renderA", "renderBuild()\\nrenderHardwareChecks()\\nrenderServoTable()")}
@@ -217,7 +217,7 @@ const diagrams = [
       ${node("diag", "Diagnostico\\nstatus, I2C, hardware checks\\nmodo/stop/reset")}
       ${node("servos", "Servos\\nPWM min/max\\nhome, dir, offset")}
       ${node("manual", "Manual\\nsliders\\nhome/sweep por servo")}
-      ${node("sensores", "Sensores\\nIMU neutral/min/max\\nAS5600 raw0/raw90")}
+      ${node("sensores", "Sensores\\nIMU neutral/min/max\\nBotones GPIO fijos")}
       ${node("mapeo", "Mapeo\\nassist, deadband\\nsmoothing, maxSpeed")}
       ${node("pruebas", "Pruebas\\nrunAllTests()\\nawaitPacket()")}
       ${node("entrega", "Entrega\\nreadiness gate\\nprofile JSON")}
@@ -377,7 +377,7 @@ const diagrams = [
       ${node("estop", "pinMode(PIN_ESTOP)\\nINPUT_PULLUP")}
       ${node("prefs", "loadPrefs()\\nsetDefaults()\\nPreferences NVS")}
       ${node("bootMode", "applyBootBehavior()\\nmodo assisted/manual/automatic")}
-      ${node("hw", "setupI2CAndHardware()\\nWire, PCA9685, MPU, AS5600")}
+      ${node("hw", "setupI2CAndHardware()\\nWire, PCA9685, MPU, botones")}
       ${node("ble", "setupBle()\\nGATT service/chars")}
       ${node("wifi", "connectWifi()\\nSTA o AP bateria")}
       ${node("ws", "startWebSocketServer()\\nWebSocket 81")}
@@ -405,12 +405,12 @@ const diagrams = [
   },
   {
     title: "10. ESP32-S3: Sensores, Servos Y Seguridad",
-    intent: "Ruta de datos desde MPU/AS5600 hasta objetivo de servo y salida PWM segura.",
+    intent: "Ruta de datos desde MPU/botones hasta objetivo de servo y salida PWM segura.",
     dot: graph("s3_control", `
       ${node("readSensors", "readAllSensors()")}
-      ${node("link", "SENSOR_LINKS\\nservo -> IMU/AS5600")}
+      ${node("link", "SENSOR_LINKS\\nservo -> IMU/boton")}
       ${node("imu", "readImuDeg()\\ntcaSel() + getMotion6()\\nfiltro complementario")}
-      ${node("as5600", "readAs5600Deg()\\nI2C raw angle + EMA\\nwrap 0..4095")}
+      ${node("button", "readButtonDeg()\\nGPIO INPUT_PULLUP\\n+ sube / - baja, 0..90")}
       ${node("online", "sensorOnline[]\\nvalidez por servo")}
       ${node("targets", "updateTargetsFromSensors()\\nmanual/asistido/automatico")}
       ${node("deadband", "deadbandDeg\\nassistLevel\\nsmoothing")}
@@ -421,9 +421,9 @@ const diagrams = [
       ${node("telemetry", "sendData()\\nservos[], sensors[], links[]")}
       ${edge("readSensors", "link")}
       ${edge("link", "imu", "hombros")}
-      ${edge("link", "as5600", "codos")}
+      ${edge("link", "button", "codos")}
       ${edge("imu", "online")}
-      ${edge("as5600", "online")}
+      ${edge("button", "online")}
       ${edge("online", "targets")}
       ${edge("targets", "deadband")}
       ${edge("deadband", "limit")}
@@ -537,13 +537,13 @@ const diagrams = [
     title: "14. Perfil De Calibracion Y Persistencia",
     intent: "Cubre como se construye, guarda, descarga y envia el perfil tecnico.",
     dot: graph("profile", `
-      ${node("defaults", "SERVO_DEFAULTS\\nIMU_DEFAULTS\\nAS5600_DEFAULTS")}
+      ${node("defaults", "SERVO_DEFAULTS\\nIMU_DEFAULTS\\nBUTTON_DEFAULTS")}
       ${node("state", "state.profile + state.tuning\\nlocalStorage STORAGE_KEY")}
-      ${node("inputs", "onServoInput()\\nonImuInput()\\nonAs5600Input()\\nupdateTuningFromControls()")}
+      ${node("inputs", "onServoInput()\\nonImuInput()\\nonButtonInput()\\nupdateTuningFromControls()")}
       ${node("dirty", "markDirty()\\nsaveLocal()")}
       ${node("profileServos", "profileServos()\\nmin/max/home/dir/PWM/offset")}
       ${node("profileImus", "profileImus()\\nneutral/min/max/invert")}
-      ${node("profileAs5600", "profileAs5600()\\nraw0/raw90/neutral/invert")}
+      ${node("profileButtons", "profileButtons()\\npin/direccion")}
       ${node("build", "buildProfile()\\nschema + metadata + readiness")}
       ${node("preview", "updateProfilePreview()\\nJSON pretty")}
       ${node("download", "downloadProfile()\\narchivo JSON")}
@@ -554,10 +554,10 @@ const diagrams = [
       ${edge("inputs", "dirty")}
       ${edge("dirty", "profileServos")}
       ${edge("dirty", "profileImus")}
-      ${edge("dirty", "profileAs5600")}
+      ${edge("dirty", "profileButtons")}
       ${edge("profileServos", "build")}
       ${edge("profileImus", "build")}
-      ${edge("profileAs5600", "build")}
+      ${edge("profileButtons", "build")}
       ${edge("build", "preview")}
       ${edge("build", "download")}
       ${edge("build", "send")}
@@ -573,7 +573,7 @@ const diagrams = [
       ${node("link", "Prueba enlace S3\\ncmd_status")}
       ${node("mode", "Prueba modos\\nmanual/assisted/automatic")}
       ${node("servo", "Prueba sweep servo\\ncmd_angle + lectura")}
-      ${node("sensor", "Prueba sensores\\nIMU/AS5600 online")}
+      ${node("sensor", "Prueba sensores\\nIMU/botones online")}
       ${node("estop", "Prueba emergencia\\ncmd_stop/cmd_reset", { fill: "#fff0f0" })}
       ${node("summary", "updateTestSummary()\\nsetTestState()")}
       ${node("readiness", "renderReadiness()\\nchecks por fase")}
@@ -619,7 +619,7 @@ const matrices = [
       ["Servidor Node", "Responde API, ejecuta arduino-cli y abre puentes seriales", "server.js"],
       ["ESP32-S3", "Recibe cmd_*, publica telemetria, mueve servos y guarda preferencias", "esp32_s3_controller.ino"],
       ["ESP32-CAM", "Entrega video/audio/estado por HTTP, WS o serial USB", "esp32_cam_assistant.ino"],
-      ["Hardware fisico", "MPU6050, AS5600, PCA9685, servos, boton de emergencia y red WiFi/BLE", "*.h, *.ino"]
+      ["Hardware fisico", "MPU6050, botones N.A., PCA9685, servos y red WiFi/BLE", "*.h, *.ino"]
     ]
   },
   {
@@ -629,7 +629,7 @@ const matrices = [
       ["cmd_mode", "Cambia manual/assisted/automatic si no hay emergencia", "app.js -> processCmd()"],
       ["cmd_angle", "Define targetDeg[id] para control manual o prueba", "sendAngle() -> processCmd()"],
       ["cmd_assist", "Ajusta asistencia 0..1 y persiste preferencia", "sendMapProfile() -> savePrefs()"],
-      ["cmd_calibration_profile", "Entrega perfil completo de servos, IMU, AS5600 y tuning", "buildProfile() -> applyCalibrationProfile()"],
+      ["cmd_calibration_profile", "Entrega perfil completo de servos, IMU, botones y tuning", "buildProfile() -> applyCalibrationProfile()"],
       ["cmd_stop / cmd_reset / cmd_home", "Seguridad, reset seguro y retorno a home", "sendCommand() -> setEmergency()/writeServo()"]
     ]
   }

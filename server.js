@@ -183,7 +183,7 @@ function sendSse(res, event, data) {                                            
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-function broadcastSerial(event, data) {                                               // Funcion broadcastSerial: encapsula la logica de sensores flex y conversion ADC.
+function broadcastSerial(event, data) {                                               // Funcion broadcastSerial: reenvia un evento a todos los clientes serial via SSE.
   for (const client of serialClients) {                                               // Bucle: recorre datos o reintenta una operacion controlada.
     sendSse(client, event, data);                                                     // Llamada: ejecuta una accion del modulo actual.
   }

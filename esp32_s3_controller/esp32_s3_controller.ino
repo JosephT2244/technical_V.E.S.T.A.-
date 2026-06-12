@@ -7,7 +7,6 @@ const int I2C_SCL = 9;
 const int PCA9685_ADDR = 0x40;
 const int TCA9548A_ADDR = 0x70;
 const int MPU6050_ADDR = 0x68;
-const int AS5600_ADDR = 0x36;
 const byte MPU_REG_SMPLRT_DIV = 0x19;
 const byte MPU_REG_CONFIG = 0x1A;
 const byte MPU_REG_GYRO_CONFIG = 0x1B;
@@ -15,50 +14,60 @@ const byte MPU_REG_ACCEL_CONFIG = 0x1C;
 const byte MPU_REG_ACCEL_XOUT_H = 0x3B;
 const byte MPU_REG_PWR_MGMT_1 = 0x6B;
 const byte MPU_REG_WHO_AM_I = 0x75;
-const byte AS5600_REG_STATUS = 0x0B;
-const byte AS5600_REG_ANGLE_H = 0x0E;
-const byte AS5600_STATUS_MAGNET_DETECTED = 0x20;
-const int AS5600_RAW_MIN = 0;
-const int AS5600_RAW_MAX = 4095;
 Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(PCA9685_ADDR);
 const byte MPU_COUNT = 4;
-const byte AS5600_COUNT = 2;
+const byte ELBOW_COUNT = 2;
+const byte BUTTON_COUNT = 4;
 const byte MPU_ADDR_OPTIONS[] = {0x68, 0x69};
 const byte MPU_ADDR_OPTION_COUNT = sizeof(MPU_ADDR_OPTIONS) / sizeof(MPU_ADDR_OPTIONS[0]);
 const byte TCA_CHANNELS[MPU_COUNT] = {0, 1, 2, 3};
-const byte CONTROLLED_SERVO_CHANNELS[MPU_COUNT] = {0, 1, 3, 4};
-const byte AS5600_TCA_CHANNELS[AS5600_COUNT] = {4, 5};
-const byte AS5600_SERVO_CHANNELS[AS5600_COUNT] = {2, 5};
-const bool INVERT_AS5600[AS5600_COUNT] = {false, false};
+const byte CONTROLLED_SERVO_IDS[MPU_COUNT] = {0, 1, 3, 4};      // id logico del servo (orden de la app/telemetria, no cambia).
+const byte CONTROLLED_SERVO_CHANNELS[MPU_COUNT] = {10, 11, 13, 14}; // canal fisico PCA9685 reubicado al rango 10-15.
+const byte BUTTON_PINS[BUTTON_COUNT] = {4, 5, 6, 7};
+const byte BUTTON_ELBOW_INDEX[BUTTON_COUNT] = {0, 0, 1, 1};
+const int BUTTON_DIRECTIONS[BUTTON_COUNT] = {1, -1, 1, -1};
+const byte BUTTON_SERVO_IDS[ELBOW_COUNT] = {2, 5};             // id logico del codo (orden de la app/telemetria, no cambia).
+const byte BUTTON_SERVO_CHANNELS[ELBOW_COUNT] = {12, 15};      // canal fisico PCA9685 reubicado al rango 10-15.
+const bool INVERT_BUTTON[BUTTON_COUNT] = {false, false, false, false};
 const int MIN_ANGLE = 0;
 const int MAX_ANGLE = 270;
 const int SERVO_CENTER_ANGLE = 135;
+const int SHOULDER_SERVO_MIN_ANGLE = 45;
+const int SHOULDER_SERVO_MAX_ANGLE = 225;
+const int BUTTON_OPEN_ANGLE = 0;
+const int BUTTON_PRESSED_ANGLE = 90;
+const int BUTTON_STEP_ANGLE = 1;
+const unsigned long BUTTON_HOLD_START_MS = 250;
+const unsigned long BUTTON_STEP_INTERVAL_MS = 45;
 const int SERVO_MIN_US = 500;
 const int SERVO_MAX_US = 2500;
-const float SENSOR_MIN_DEG = -90.0;
-const float SENSOR_MAX_DEG = 90.0;
-const float FILTER_ALPHA = 0.25;
+const float SENSOR_MIN_DEG = -45.0;
+const float SENSOR_MAX_DEG = 45.0;
+const float FILTER_ALPHA = 1.00;
 const int LOOP_DELAY_MS = 20;
 const unsigned long STATUS_INTERVAL_MS = 1000;
+const unsigned long TELEMETRY_INTERVAL_MS = 100;
 const float RAD_TO_DEG_F = 57.2957795;
 enum SensorAxis {
   AXIS_ROLL,
   AXIS_PITCH
 };
 const SensorAxis SENSOR_AXES[MPU_COUNT] = {
+  AXIS_ROLL,
   AXIS_PITCH,
-  AXIS_PITCH,
-  AXIS_PITCH,
+  AXIS_ROLL,
   AXIS_PITCH
 };
 const bool INVERT_SENSOR[MPU_COUNT] = {
   false,
   false,
-  false,
-  false
+  true,
+  true
 };
 bool mpuReady[MPU_COUNT] = {false, false, false, false};
-bool as5600Ready[AS5600_COUNT] = {false, false};
+bool buttonReady[BUTTON_COUNT] = {false, false, false, false};
+bool buttonPressed[BUTTON_COUNT] = {false, false, false, false};
+bool buttonWasPressed[BUTTON_COUNT] = {false, false, false, false};
 byte detectedMpuAddresses[MPU_COUNT] = {
   MPU6050_ADDR,
   MPU6050_ADDR,
@@ -71,11 +80,22 @@ float filteredServoAngles[MPU_COUNT] = {
   SERVO_CENTER_ANGLE,
   SERVO_CENTER_ANGLE
 };
-float filteredAs5600ServoAngles[AS5600_COUNT] = {
+float filteredButtonServoAngles[ELBOW_COUNT] = {
+  BUTTON_OPEN_ANGLE,
+  BUTTON_OPEN_ANGLE
+};
+float lastMpuTiltDeg[MPU_COUNT] = {0, 0, 0, 0};
+float mpuZeroTiltDeg[MPU_COUNT] = {0, 0, 0, 0};
+int lastMpuServoAngles[MPU_COUNT] = {
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE,
   SERVO_CENTER_ANGLE,
   SERVO_CENTER_ANGLE
 };
+int buttonServoAngles[ELBOW_COUNT] = {BUTTON_OPEN_ANGLE, BUTTON_OPEN_ANGLE};
+unsigned long buttonLastStepMs[BUTTON_COUNT] = {0, 0, 0, 0};
 unsigned long lastStatusMs = 0;
+unsigned long lastTelemetryMs = 0;
 
 // =====================================================================
 // Verificaciones de subida (adaptadas del firmware S3 completo).
@@ -83,7 +103,7 @@ unsigned long lastStatusMs = 0;
 // rutinas de arranque (diagnostico I2C, inicio seguro sin PWM, resumen
 // PASS/FALLO) y re-deteccion de sensores caidos durante el loop.
 // =====================================================================
-const char* FW_VERSION = "VESTA-S3-simple-1.0";              // Identifica el firmware subido en el resumen serial.
+const char* FW_VERSION = "VESTA-S3-buttons-1.1";             // Identifica el firmware subido en el resumen serial.
 const byte SAFE_ARM_PRIME_SAMPLES = 12;                      // Muestras de referencia tomadas sin PWM antes de permitir movimiento.
 const unsigned long SAFE_ARM_SETTLE_MS = 1200;               // Espera tras cmd_arm para estabilizar sensores antes de energizar.
 const uint8_t SENSOR_FAULT_LIMIT = 5;                        // Lecturas fallidas seguidas antes de marcar un sensor offline.
@@ -96,7 +116,6 @@ bool servosArmed = false;                                    // Compuerta de seg
 bool servoArmPending = false;                                // cmd_arm recibido; se esta esperando estabilizacion antes de activar PWM.
 unsigned long servoArmStartMs = 0;                           // Marca de tiempo del inicio de armado seguro.
 uint8_t mpuFaults[MPU_COUNT] = {0, 0, 0, 0};                 // Contador de fallos de lectura por MPU.
-uint8_t as5600Faults[AS5600_COUNT] = {0, 0};                 // Contador de fallos de lectura por AS5600.
 unsigned long lastSensorRecheckMs = 0;                       // Marca de tiempo de la ultima re-deteccion.
 
 // Funcion       | deviceFound: comprueba si un dispositivo I2C responde en una direccion.
@@ -237,8 +256,8 @@ void releaseControlledServos() {
   for (byte i = 0; i < MPU_COUNT; i++) {
     disableServo(CONTROLLED_SERVO_CHANNELS[i]);
   }
-  for (byte i = 0; i < AS5600_COUNT; i++) {
-    disableServo(AS5600_SERVO_CHANNELS[i]);
+  for (byte i = 0; i < ELBOW_COUNT; i++) {
+    disableServo(BUTTON_SERVO_CHANNELS[i]);
   }
 }
 // Funcion       | centerControlledServos: lleva servos controlados a su posicion central.
@@ -246,8 +265,8 @@ void centerControlledServos() {
   for (byte i = 0; i < MPU_COUNT; i++) {
     setServoAngle(CONTROLLED_SERVO_CHANNELS[i], SERVO_CENTER_ANGLE);
   }
-  for (byte i = 0; i < AS5600_COUNT; i++) {
-    setServoAngle(AS5600_SERVO_CHANNELS[i], SERVO_CENTER_ANGLE);
+  for (byte i = 0; i < ELBOW_COUNT; i++) {
+    setServoAngle(BUTTON_SERVO_CHANNELS[i], SERVO_CENTER_ANGLE);
   }
 }
 // Funcion       | mapFloat: remapea valores flotantes entre rangos.
@@ -257,17 +276,8 @@ float mapFloat(float value, float inMin, float inMax, float outMin, float outMax
 // Funcion       | tiltToServoAngle: convierte inclinacion de IMU a angulo de servo.
 int tiltToServoAngle(float tiltDeg) {
   tiltDeg = constrain(tiltDeg, SENSOR_MIN_DEG, SENSOR_MAX_DEG);
-  float mapped = mapFloat(tiltDeg, SENSOR_MIN_DEG, SENSOR_MAX_DEG, MIN_ANGLE, MAX_ANGLE);
-  return constrain((int)(mapped + 0.5), MIN_ANGLE, MAX_ANGLE);
-}
-// Funcion       | as5600ToServoAngle: convierte lectura magnetica AS5600 a angulo de servo.
-int as5600ToServoAngle(uint16_t rawAngle, bool invert) {
-  rawAngle = constrain(rawAngle, AS5600_RAW_MIN, AS5600_RAW_MAX);
-  if (invert) {
-    rawAngle = AS5600_RAW_MAX - rawAngle;
-  }
-  long mapped = map(rawAngle, AS5600_RAW_MIN, AS5600_RAW_MAX, MIN_ANGLE, MAX_ANGLE);
-  return constrain((int)mapped, MIN_ANGLE, MAX_ANGLE);
+  float mapped = mapFloat(tiltDeg, SENSOR_MIN_DEG, SENSOR_MAX_DEG, SHOULDER_SERVO_MIN_ANGLE, SHOULDER_SERVO_MAX_ANGLE);
+  return constrain((int)(mapped + 0.5), SHOULDER_SERVO_MIN_ANGLE, SHOULDER_SERVO_MAX_ANGLE);
 }
 // Funcion       | getTiltDeg: calcula roll o pitch segun eje configurado.
 float getTiltDeg(byte index, float x, float y, float z) {
@@ -330,63 +340,27 @@ void setupMpu(byte index) {
   }
   Serial.println(".");
 }
-// Funcion       | readAs5600Status: lee estado magnetico del AS5600.
-bool readAs5600Status(byte index, byte *status) {
-  if (!tcaSelect(AS5600_TCA_CHANNELS[index])) {
-    return false;
+// Funcion       | setupButtons: inicializa botones normalmente abiertos de codo.
+void setupButtons() {
+  for (byte elbow = 0; elbow < ELBOW_COUNT; elbow++) {
+    buttonServoAngles[elbow] = BUTTON_OPEN_ANGLE;
+    filteredButtonServoAngles[elbow] = BUTTON_OPEN_ANGLE;
   }
-  return readMpuRegister(AS5600_ADDR, AS5600_REG_STATUS, status);
-}
-// Funcion       | readAs5600RawAngle: lee el angulo bruto de 12 bits del AS5600.
-bool readAs5600RawAngle(byte index, uint16_t *rawAngle) {
-  if (!tcaSelect(AS5600_TCA_CHANNELS[index])) {
-    return false;
-  }
-  byte buffer[2];
-  if (!readMpuBytes(AS5600_ADDR, AS5600_REG_ANGLE_H, buffer, 2)) {
-    return false;
-  }
-  *rawAngle = (uint16_t)(((buffer[0] & 0x0F) << 8) | buffer[1]);
-  return true;
-}
-// Funcion       | setupAs5600: detecta y valida un AS5600 en su canal TCA.
-void setupAs5600(byte index) {
-  Serial.print("Iniciando AS5600 ");
-  Serial.print(index + 1);
-  Serial.print(" en TCA canal ");
-  Serial.print(AS5600_TCA_CHANNELS[index]);
-  Serial.print(" para servo canal ");
-  Serial.print(AS5600_SERVO_CHANNELS[index]);
-  Serial.print("...");
-  if (!tcaSelect(AS5600_TCA_CHANNELS[index])) {
-    Serial.println(" ERROR: no se pudo seleccionar el canal.");
-    return;
-  }
-  if (!deviceFound(AS5600_ADDR)) {
-    Serial.println(" ERROR: no detectado en 0x36.");
-    scanSelectedTcaChannel(AS5600_TCA_CHANNELS[index]);
-    return;
-  }
-  byte status = 0;
-  bool statusOk = readAs5600Status(index, &status);
-  as5600Ready[index] = true;
-  as5600Faults[index] = 0;
-  Serial.print(" OK direccion ");
-  printHexAddress(AS5600_ADDR);
-  if (statusOk) {
-    Serial.print(", iman ");
-    Serial.print((status & AS5600_STATUS_MAGNET_DETECTED) ? "detectado" : "no detectado");
-  }
-  Serial.println(".");
-}
-// Funcion       | setupAs5600Sensors: inicializa los sensores magneticos de codo.
-void setupAs5600Sensors() {
-  if (!deviceFound(TCA9548A_ADDR)) {
-    Serial.println("ERROR: No se detecta el TCA9548A para los AS5600.");
-    return;
-  }
-  for (byte i = 0; i < AS5600_COUNT; i++) {
-    setupAs5600(i);
+  for (byte i = 0; i < BUTTON_COUNT; i++) {
+    pinMode(BUTTON_PINS[i], INPUT_PULLUP);
+    buttonReady[i] = true;
+    buttonPressed[i] = digitalRead(BUTTON_PINS[i]) == LOW;
+    buttonWasPressed[i] = false;
+    buttonLastStepMs[i] = millis();
+    Serial.print("Boton N.A. ");
+    Serial.print(i + 1);
+    Serial.print(" en GPIO");
+    Serial.print(BUTTON_PINS[i]);
+    Serial.print(BUTTON_DIRECTIONS[i] > 0 ? " (+)" : " (-)");
+    Serial.print(" para servo canal ");
+    Serial.print(BUTTON_SERVO_CHANNELS[BUTTON_ELBOW_INDEX[i]]);
+    Serial.print(": ");
+    Serial.println(buttonPressed[i] ? "presionado" : "abierto");
   }
 }
 // Funcion       | setupMpus: inicializa todos los sensores MPU configurados.
@@ -417,41 +391,92 @@ bool readMpuAccel(byte index, float *x, float *y, float *z) {
   *z = (float)rawZ;
   return true;
 }
-// Funcion       | updateServoFromAs5600: actualiza codo con lectura AS5600 filtrada.
-void updateServoFromAs5600(byte index, bool showStatus) {
-  if (!as5600Ready[index]) {
+
+// Funcion       | calibrateMpuZeros: captura la postura neutral de cada MPU sin mover servos.
+void calibrateMpuZeros() {
+  Serial.println("Calibrando neutral MPU: manten los brazos quietos...");
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    if (!mpuReady[i]) {
+      mpuZeroTiltDeg[i] = 0;
+      continue;
+    }
+    float sum = 0;
+    byte good = 0;
+    for (byte sample = 0; sample < 60; sample++) {
+      float accelX = 0;
+      float accelY = 0;
+      float accelZ = 0;
+      if (readMpuAccel(i, &accelX, &accelY, &accelZ)) {
+        sum += getTiltDeg(i, accelX, accelY, accelZ);
+        good++;
+      }
+      delay(10);
+    }
+    if (good > 0) {
+      mpuZeroTiltDeg[i] = sum / good;
+      lastMpuTiltDeg[i] = 0;
+      lastMpuServoAngles[i] = SERVO_CENTER_ANGLE;
+      filteredServoAngles[i] = SERVO_CENTER_ANGLE;
+      Serial.print("MPU ");
+      Serial.print(i + 1);
+      Serial.print(" neutral ");
+      Serial.print(mpuZeroTiltDeg[i], 1);
+      Serial.println(" deg.");
+    } else {
+      mpuReady[i] = false;
+      Serial.print("MPU ");
+      Serial.print(i + 1);
+      Serial.println(" sin muestras validas para neutral.");
+    }
+  }
+  tcaDisableAll();
+  Serial.println("Calibracion neutral MPU lista.");
+}
+
+// Funcion       | updateServoFromButton: actualiza codo con boton N.A. filtrado.
+void updateServoFromButton(byte index, bool showStatus) {
+  if (!buttonReady[index]) {
     return;
   }
-  uint16_t rawAngle = 0;
-  if (!readAs5600RawAngle(index, &rawAngle)) {
-    if (showStatus) {
-      Serial.print("AS5600 ");
-      Serial.print(index + 1);
-      Serial.println(": lectura fallida.");
-    }
-    // Agregado: tras varios fallos seguidos se marca offline para que el loop lo re-detecte.
-    if (++as5600Faults[index] >= SENSOR_FAULT_LIMIT) {
-      as5600Ready[index] = false;
-      Serial.print("AS5600 ");
-      Serial.print(index + 1);
-      Serial.println(": marcado offline tras fallos repetidos.");
-    }
-    return;
+  bool pressed = digitalRead(BUTTON_PINS[index]) == LOW;
+  if (INVERT_BUTTON[index]) {
+    pressed = !pressed;
   }
-  as5600Faults[index] = 0;
-  int targetAngle = as5600ToServoAngle(rawAngle, INVERT_AS5600[index]);
-  filteredAs5600ServoAngles[index] = FILTER_ALPHA * targetAngle + (1.0 - FILTER_ALPHA) * filteredAs5600ServoAngles[index];
-  int servoAngle = constrain((int)(filteredAs5600ServoAngles[index] + 0.5), MIN_ANGLE, MAX_ANGLE);
+  buttonPressed[index] = pressed;
+
+  unsigned long now = millis();
+  byte elbow = BUTTON_ELBOW_INDEX[index];
+  if (pressed) {
+    unsigned long steps = 0;
+    if (!buttonWasPressed[index]) {
+      steps = 1;
+      buttonLastStepMs[index] = now + BUTTON_HOLD_START_MS;
+    } else if ((long)(now - buttonLastStepMs[index]) >= 0) {
+      unsigned long elapsed = now - buttonLastStepMs[index];
+      steps = 1 + (elapsed / BUTTON_STEP_INTERVAL_MS);
+      buttonLastStepMs[index] += (unsigned long)steps * BUTTON_STEP_INTERVAL_MS;
+    }
+    if (steps > 0) {
+      buttonServoAngles[elbow] += BUTTON_DIRECTIONS[index] * BUTTON_STEP_ANGLE * steps;
+    }
+  } else {
+    buttonLastStepMs[index] = now;
+  }
+  buttonWasPressed[index] = pressed;
+  buttonServoAngles[elbow] = constrain(buttonServoAngles[elbow], BUTTON_OPEN_ANGLE, BUTTON_PRESSED_ANGLE);
+  filteredButtonServoAngles[elbow] = buttonServoAngles[elbow];
+  int servoAngle = constrain(buttonServoAngles[elbow], BUTTON_OPEN_ANGLE, BUTTON_PRESSED_ANGLE);
   if (servosArmed) {
-    setServoAngle(AS5600_SERVO_CHANNELS[index], servoAngle);
+    setServoAngle(BUTTON_SERVO_CHANNELS[elbow], servoAngle);
   }
   if (showStatus) {
-    Serial.print("AS5600 ");
+    Serial.print("Boton N.A. ");
     Serial.print(index + 1);
     Serial.print(" -> servo canal ");
-    Serial.print(AS5600_SERVO_CHANNELS[index]);
-    Serial.print(": raw ");
-    Serial.print(rawAngle);
+    Serial.print(BUTTON_SERVO_CHANNELS[elbow]);
+    Serial.print(BUTTON_DIRECTIONS[index] > 0 ? " sube" : " baja");
+    Serial.print(": ");
+    Serial.print(pressed ? "presionado" : "abierto");
     Serial.print(", angulo ");
     Serial.println(servoAngle);
   }
@@ -495,10 +520,12 @@ void updateServoFromMpu(byte index, bool showStatus) {
     return;
   }
   mpuFaults[index] = 0;
-  float tiltDeg = getTiltDeg(index, accelX, accelY, accelZ);
+  float tiltDeg = getTiltDeg(index, accelX, accelY, accelZ) - mpuZeroTiltDeg[index];
   int targetAngle = tiltToServoAngle(tiltDeg);
   filteredServoAngles[index] = FILTER_ALPHA * targetAngle + (1.0 - FILTER_ALPHA) * filteredServoAngles[index];
   int servoAngle = constrain((int)(filteredServoAngles[index] + 0.5), MIN_ANGLE, MAX_ANGLE);
+  lastMpuTiltDeg[index] = tiltDeg;
+  lastMpuServoAngles[index] = servoAngle;
   if (servosArmed) {
     setServoAngle(CONTROLLED_SERVO_CHANNELS[index], servoAngle);
   }
@@ -574,8 +601,8 @@ void primeServoFilters() {
     for (byte i = 0; i < MPU_COUNT; i++) {
       updateServoFromMpu(i, false);
     }
-    for (byte i = 0; i < AS5600_COUNT; i++) {
-      updateServoFromAs5600(i, false);
+    for (byte i = 0; i < BUTTON_COUNT; i++) {
+      updateServoFromButton(i, false);
     }
     delay(LOOP_DELAY_MS);
   }
@@ -625,12 +652,12 @@ void serviceServoArming() {
 // Funcion       | printBootSummary: resume estado de sensores, PCA y seguridad al arrancar.
 void printBootSummary() {
   byte mpuOk = 0;
-  byte asOk = 0;
+  byte buttonOk = 0;
   for (byte i = 0; i < MPU_COUNT; i++) {
     if (mpuReady[i]) mpuOk++;
   }
-  for (byte i = 0; i < AS5600_COUNT; i++) {
-    if (as5600Ready[i]) asOk++;
+  for (byte i = 0; i < BUTTON_COUNT; i++) {
+    if (buttonReady[i]) buttonOk++;
   }
   bool tcaOk = deviceFound(TCA9548A_ADDR);
   Serial.println("=== Resumen de verificacion de subida ===");
@@ -645,12 +672,12 @@ void printBootSummary() {
   Serial.print("/");
   Serial.print(MPU_COUNT);
   Serial.println(mpuOk == MPU_COUNT ? " OK" : " (revisar fallidos)");
-  Serial.print("AS5600: ");
-  Serial.print(asOk);
+  Serial.print("Botones N.A.: ");
+  Serial.print(buttonOk);
   Serial.print("/");
-  Serial.print(AS5600_COUNT);
-  Serial.println(asOk == AS5600_COUNT ? " OK" : " (revisar fallidos)");
-  bool allOk = pcaOnline && tcaOk && mpuOk == MPU_COUNT && asOk == AS5600_COUNT;
+  Serial.print(BUTTON_COUNT);
+  Serial.println(buttonOk == BUTTON_COUNT ? " OK" : " (revisar GPIO/GND)");
+  bool allOk = pcaOnline && tcaOk && mpuOk == MPU_COUNT && buttonOk == BUTTON_COUNT;
   Serial.println(allOk ? ">> VERIFICACION OK: sensores listos, servos desarmados." : ">> VERIFICACION CON ADVERTENCIAS: revisar conexiones antes de armar.");
   Serial.println("==========================================");
 }
@@ -663,16 +690,6 @@ void recheckOfflineSensors() {
       setupMpu(i);
       if (mpuReady[i]) {
         Serial.print("MPU6050 ");
-        Serial.print(i + 1);
-        Serial.println(" recuperado.");
-      }
-    }
-  }
-  for (byte i = 0; i < AS5600_COUNT; i++) {
-    if (!as5600Ready[i]) {
-      setupAs5600(i);
-      if (as5600Ready[i]) {
-        Serial.print("AS5600 ");
         Serial.print(i + 1);
         Serial.println(" recuperado.");
       }
@@ -707,7 +724,8 @@ void setup() {
   pca.setPWMFreq(50);
   initializeServosSafely();
   setupMpus();
-  setupAs5600Sensors();
+  setupButtons();
+  calibrateMpuZeros();
   primeServoFilters();
   printBootSummary();
   delay(500);
@@ -729,6 +747,126 @@ void sendIdentity(const char* type) {
   Serial.print(",\"armPending\":");
   Serial.print(servoArmPending ? "true" : "false");
   Serial.println("}");
+}
+
+// Funcion       | printJsonBool: imprime booleanos validos para JSON.
+void printJsonBool(bool value) {
+  Serial.print(value ? "true" : "false");
+}
+
+// Funcion       | printButtonTelemetryDetail: imprime estado de un boton fisico.
+void printButtonTelemetryDetail(byte index) {
+  Serial.print("{\"pin\":");
+  Serial.print(BUTTON_PINS[index]);
+  Serial.print(",\"pressed\":");
+  printJsonBool(buttonPressed[index]);
+  Serial.print(",\"direction\":");
+  Serial.print(BUTTON_DIRECTIONS[index]);
+  Serial.print(",\"limitDeg\":");
+  Serial.print(BUTTON_DIRECTIONS[index] > 0 ? BUTTON_PRESSED_ANGLE : BUTTON_OPEN_ANGLE);
+  Serial.print("}");
+}
+
+// Funcion       | printMpuServoTelemetry: imprime un servo enlazado a MPU en el formato de la pagina.
+void printMpuServoTelemetry(byte index, bool first) {
+  if (!first) {
+    Serial.print(",");
+  }
+  int angle = lastMpuServoAngles[index];
+  Serial.print("{\"id\":");
+  Serial.print(CONTROLLED_SERVO_IDS[index]);
+  Serial.print(",\"channel\":");
+  Serial.print(CONTROLLED_SERVO_CHANNELS[index]);
+  Serial.print(",\"angle\":");
+  Serial.print(angle);
+  Serial.print(",\"target\":");
+  Serial.print(angle);
+  Serial.print(",\"pwm\":");
+  Serial.print(angleToPwmTicks(angle));
+  Serial.print(",\"sensor\":");
+  Serial.print(lastMpuTiltDeg[index], 1);
+  Serial.print(",\"sensorKind\":\"imu\",\"sensorId\":");
+  Serial.print(index);
+  Serial.print(",\"sensorSource\":\"MPU ");
+  Serial.print(index + 1);
+  Serial.print(" TCA");
+  Serial.print(TCA_CHANNELS[index]);
+  Serial.print("\",\"raw\":");
+  Serial.print(lastMpuTiltDeg[index], 1);
+  Serial.print(",\"neutral\":0,\"online\":");
+  printJsonBool(mpuReady[index]);
+  Serial.print(",\"faults\":");
+  Serial.print(mpuFaults[index]);
+  Serial.print(",\"moving\":");
+  printJsonBool(servosArmed);
+  Serial.print(",\"amp\":0,\"temp\":0}");
+}
+
+// Funcion       | printButtonServoTelemetry: imprime un codo controlado por dos botones N.A.
+void printButtonServoTelemetry(byte elbow, bool first) {
+  if (!first) {
+    Serial.print(",");
+  }
+  byte firstButton = elbow == 0 ? 0 : 2;
+  byte secondButton = firstButton + 1;
+  bool pressed = buttonPressed[firstButton] || buttonPressed[secondButton];
+  bool online = buttonReady[firstButton] || buttonReady[secondButton];
+  int angle = constrain(buttonServoAngles[elbow], BUTTON_OPEN_ANGLE, BUTTON_PRESSED_ANGLE);
+  Serial.print("{\"id\":");
+  Serial.print(BUTTON_SERVO_IDS[elbow]);
+  Serial.print(",\"channel\":");
+  Serial.print(BUTTON_SERVO_CHANNELS[elbow]);
+  Serial.print(",\"angle\":");
+  Serial.print(angle);
+  Serial.print(",\"target\":");
+  Serial.print(angle);
+  Serial.print(",\"pwm\":");
+  Serial.print(angleToPwmTicks(angle));
+  Serial.print(",\"sensor\":");
+  Serial.print(angle);
+  Serial.print(",\"sensorKind\":\"button\",\"sensorId\":");
+  Serial.print(firstButton);
+  Serial.print(",\"sensorSource\":\"Botones codo ");
+  Serial.print(elbow == 0 ? "izquierdo" : "derecho");
+  Serial.print("\",\"raw\":");
+  Serial.print(pressed ? 1 : 0);
+  Serial.print(",\"pressed\":");
+  printJsonBool(pressed);
+  Serial.print(",\"pin\":");
+  Serial.print(BUTTON_PINS[firstButton]);
+  Serial.print(",\"openDeg\":");
+  Serial.print(BUTTON_OPEN_ANGLE);
+  Serial.print(",\"pressedDeg\":");
+  Serial.print(BUTTON_PRESSED_ANGLE);
+  Serial.print(",\"online\":");
+  printJsonBool(online);
+  Serial.print(",\"faults\":0,\"buttons\":[");
+  printButtonTelemetryDetail(firstButton);
+  Serial.print(",");
+  printButtonTelemetryDetail(secondButton);
+  Serial.print("],\"moving\":");
+  printJsonBool(servosArmed && pressed);
+  Serial.print(",\"amp\":0,\"temp\":0}");
+}
+
+// Funcion       | sendSensorTelemetry: manda lecturas en vivo en JSON para la pagina tecnica.
+void sendSensorTelemetry() {
+  Serial.print("{\"role\":\"controller\",\"type\":\"sensors\",\"fw\":\"");
+  Serial.print(FW_VERSION);
+  Serial.print("\",\"t\":");
+  Serial.print(millis());
+  Serial.print(",\"mode\":\"manual\",\"emergency\":false,\"estop\":false,\"armed\":");
+  printJsonBool(servosArmed);
+  Serial.print(",\"pcaOnline\":");
+  printJsonBool(pcaOnline);
+  Serial.print(",\"sensorless\":false,\"servos\":[");
+  printMpuServoTelemetry(0, true);
+  printMpuServoTelemetry(1, false);
+  printButtonServoTelemetry(0, false);
+  printMpuServoTelemetry(2, false);
+  printMpuServoTelemetry(3, false);
+  printButtonServoTelemetry(1, false);
+  Serial.println("]}");
 }
 
 // Lee comandos que envia la pagina tecnica por Serial. La deteccion manda
@@ -757,6 +895,17 @@ void handleSerialCommands() {
           requestServoArm();
           sendIdentity("ack");
           lastIdentityMs = millis();
+        } else if (cmd.indexOf("cmd_calibrate") >= 0 ||
+                   cmd.indexOf("calibrate") >= 0 ||
+                   cmd.indexOf("calibrar") >= 0) {
+          bool wasArmed = servosArmed;
+          disarmServos("calibracion neutral");
+          calibrateMpuZeros();
+          if (wasArmed) {
+            requestServoArm();
+          }
+          sendIdentity("ack");
+          lastIdentityMs = millis();
         } else if (cmd.indexOf("cmd_status") >= 0 ||
                    cmd.indexOf("status") >= 0 ||
                    cmd.indexOf("ping") >= 0) {
@@ -783,10 +932,14 @@ void loop() {
   for (byte i = 0; i < MPU_COUNT; i++) {
     updateServoFromMpu(i, showStatus);
   }
-  for (byte i = 0; i < AS5600_COUNT; i++) {
-    updateServoFromAs5600(i, showStatus);
+  for (byte i = 0; i < BUTTON_COUNT; i++) {
+    updateServoFromButton(i, showStatus);
   }
   serviceServoArming();
+  if (millis() - lastTelemetryMs >= TELEMETRY_INTERVAL_MS) {
+    lastTelemetryMs = millis();
+    sendSensorTelemetry();
+  }
   if (showStatus) {
     lastStatusMs = millis();
   }

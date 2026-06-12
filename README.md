@@ -15,8 +15,8 @@ Este folder es el único punto de entrada para:
 
 <!-- Comentario de lista: Cargar firmware al ESP32-S3 N16R8 y al ESP32-CAM. -->
 - Cargar firmware al ESP32-S3 N16R8 y al ESP32-CAM.
-<!-- Comentario de lista: Calibrar servos IMUs y AS5600. -->
-- Calibrar servos, IMUs y AS5600.
+<!-- Comentario de lista: Calibrar servos IMUs y botones N A. -->
+- Calibrar servos, IMUs y botones N.A.
 <!-- Comentario de lista: Definir mapeo de asistencia y topes mecánicos. -->
 - Definir mapeo de asistencia y topes mecánicos.
 <!-- Comentario de lista: Ejecutar pruebas automatizadas de motorización y sensores. -->
@@ -77,7 +77,7 @@ La página está organizada en 8 fases consecutivas:
 <!-- Comentario de tabla: fila de referencia tecnica. -->
 | 04| Servos       | PWM mín/máx, home, dirección, offset y prueba individual de cada servo.    |
 <!-- Comentario de tabla: fila de referencia tecnica. -->
-| 05| Sensores     | Captura neutral/min/max para los 4 MPU6050 y raw0/raw90 para 2 AS5600.      |
+| 05| Sensores     | Captura neutral/min/max para MPU6050 y muestra el cableado de 4 botones N.A.|
 <!-- Comentario de tabla: fila de referencia tecnica. -->
 | 06| Mapeo        | Asistencia, zona muerta, suavizado y velocidad máxima.                      |
 <!-- Comentario de tabla: fila de referencia tecnica. -->
@@ -113,8 +113,8 @@ BLE y WiFi pueden funcionar sin la PC.
 - 6 servos DS51150 de 150 kg/cm y 270°, por PCA9685.
 <!-- Comentario de lista: 4 MPU6050 por TCA9548A hombros lateral y frontal de cada lado. -->
 - 4 MPU6050 por TCA9548A (hombros lateral y frontal de cada lado).
-<!-- Comentario de lista: 2 AS5600 para codos por TCA9548A. -->
-- 2 AS5600 para codos (izquierdo en TCA4 y derecho en TCA5, direccion I2C 0x36).
+<!-- Comentario de lista: 4 botones normalmente abiertos para codos. -->
+- 4 botones normalmente abiertos para codos: izquierdo + en GPIO4, izquierdo - en GPIO5, derecho + en GPIO6 y derecho - en GPIO7, cerrando a GND.
 <!-- Comentario de lista: Botón físico de paro de emergencia. -->
 - Botón físico de paro de emergencia.
 
@@ -162,7 +162,7 @@ Comandos de calibración persistente (sólo desde esta herramienta):
 ```json
 {"type":"cmd_calibration_profile","profile":{}}
 {"type":"cmd_calibration_servos","servos":[]}
-{"type":"cmd_calibration_sensors","imus":[],"as5600":[]}
+{"type":"cmd_calibration_sensors","imus":[],"buttons":[]}
 {"type":"cmd_calibration_mapping","tuning":{}}
 ```
 
@@ -308,8 +308,8 @@ verifica:
 - Cambio entre modos manual / asistido / automático.
 <!-- Comentario de lista: Sweep individual home → max → home en los 6 servos. -->
 - Sweep individual home → max → home en los 6 servos.
-<!-- Comentario de lista: Lectura en vivo de los 4 IMUs y los 2 AS5600. -->
-- Lectura en vivo de los 4 IMUs y los 2 AS5600.
+<!-- Comentario de lista: Lectura en vivo de los 4 IMUs y los 4 botones N A. -->
+- Lectura en vivo de los 4 IMUs y los 4 botones N.A.
 <!-- Comentario de lista: Activación remota de la parada de emergencia. -->
 - Activación remota de la parada de emergencia.
 
@@ -333,8 +333,8 @@ La pestaña `Entrega` genera un perfil JSON con:
 - `assembly`: BOM y pasos del armado físico.
 <!-- Comentario de lista: servos canales límites home dirección offsets y PWM. -->
 - `servos`: canales, límites, home, dirección, offsets y PWM.
-<!-- Comentario de lista: sensors buses MPU6050 canales AS5600 capturas de neutral/min/max. -->
-- `sensors`: buses MPU6050, canales AS5600, capturas de neutral/min/max y raw0/raw90.
+<!-- Comentario de lista: sensors buses MPU6050 y botones N A. -->
+- `sensors`: buses MPU6050, capturas de neutral/min/max y botones N.A. fijos con dirección +/- y rango 0..90°.
 <!-- Comentario de lista: tuning asistencia zona muerta suavizado y velocidad máxima. -->
 - `tuning`: asistencia, zona muerta, suavizado y velocidad máxima.
 <!-- Comentario de lista: tests resultado de la suite con timestamps. -->

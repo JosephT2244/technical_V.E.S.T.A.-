@@ -26,1899 +26,959 @@
   const FIRMWARE_DEFAULT_CODE = {
     // Campo s3: firmware ESP32-S3 incluido como texto sin procesar.
     s3: String.raw`
-// Comentarios de programador: identifican hardware, datos y flujo sin alterar la logica.
-
-/*
- * V.E.S.T.A. ESP32-S3 controller firmware
- *
- * Hardware:
- * - ESP32-S3 N16R8 with external antenna
- * - TCA9548A + 4x MPU6050
- * - PCA9685 + 6x DS51150 150kg/cm 270 deg servos
- * - 2x AS5600 magnetic angle sensors for elbows
- * - Remote emergency stop only (cmd_stop / cmd_reset). No physical button.
- *
- * Libraries:
- * - ArduinoJson by Benoit Blanchon
- * - WebSockets by Markus Sattler
- * - Adafruit PWM Servo Driver Library
- * - MPU6050 by Electronic Cats
- */
-
-#include "esp32_s3_config.h"                                                          // Dependencia: incluye "esp32_s3_config.h" para compilar este modulo.
-#include <Wire.h>                                                                     // Dependencia: incluye <Wire.h> para compilar este modulo.
-#include <WiFi.h>                                                                     // Dependencia: incluye <WiFi.h> para compilar este modulo.
-#include <esp_wifi.h>                                                                 // Dependencia: incluye <esp_wifi.h> para compilar este modulo.
-#include <esp_log.h>                                                                  // Dependencia: incluye <esp_log.h> para compilar este modulo.
-#include <ESPmDNS.h>                                                                  // Dependencia: incluye <ESPmDNS.h> para compilar este modulo.
-#include <WebSocketsServer.h>                                                         // Dependencia: incluye <WebSocketsServer.h> para compilar este modulo.
-#include <ArduinoJson.h>                                                              // Dependencia: incluye <ArduinoJson.h> para compilar este modulo.
-#include <Adafruit_PWMServoDriver.h>                                                  // Dependencia: incluye <Adafruit_PWMServoDriver.h> para compilar este modulo.
-#include <MPU6050.h>                                                                  // Dependencia: incluye <MPU6050.h> para compilar este modulo.
-#include <Preferences.h>                                                              // Dependencia: incluye <Preferences.h> para compilar este modulo.
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-#include <BLEDevice.h>                                                                // Dependencia: incluye <BLEDevice.h> para compilar este modulo.
-#include <BLEServer.h>                                                                // Dependencia: incluye <BLEServer.h> para compilar este modulo.
-#include <BLEUtils.h>                                                                 // Dependencia: incluye <BLEUtils.h> para compilar este modulo.
-#include <BLE2902.h>                                                                  // Dependencia: incluye <BLE2902.h> para compilar este modulo.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-WebSocketsServer ws(WS_PORT);                                                         // Declaracion ws: dato de comunicaciones.
-Adafruit_PWMServoDriver pca(PCA_ADDR);                                                // Declaracion pca: dato de pca.
-Preferences prefs;                                                                    // Declaracion prefs: dato de prefs.
-
-MPU6050 imu[NUM_IMUS] = {                                                             // Arreglo imu: arreglo de datos para lectura de sensores IMU/I2C.
-  MPU6050(MPU_ADDR),                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-  MPU6050(MPU_ADDR),                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-  MPU6050(MPU_ADDR),                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-  MPU6050(MPU_ADDR)                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
+// Archivo        | esp32_s3_controller.ino: firmware simple de sensores I2C y servos del exoesqueleto.
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+#include <math.h>
+const int I2C_SDA = 8;
+const int I2C_SCL = 9;
+const int PCA9685_ADDR = 0x40;
+const int TCA9548A_ADDR = 0x70;
+const int MPU6050_ADDR = 0x68;
+const byte MPU_REG_SMPLRT_DIV = 0x19;
+const byte MPU_REG_CONFIG = 0x1A;
+const byte MPU_REG_GYRO_CONFIG = 0x1B;
+const byte MPU_REG_ACCEL_CONFIG = 0x1C;
+const byte MPU_REG_ACCEL_XOUT_H = 0x3B;
+const byte MPU_REG_PWR_MGMT_1 = 0x6B;
+const byte MPU_REG_WHO_AM_I = 0x75;
+Adafruit_PWMServoDriver pca = Adafruit_PWMServoDriver(PCA9685_ADDR);
+const byte MPU_COUNT = 4;
+const byte ELBOW_COUNT = 2;
+const byte BUTTON_COUNT = 4;
+const byte MPU_ADDR_OPTIONS[] = {0x68, 0x69};
+const byte MPU_ADDR_OPTION_COUNT = sizeof(MPU_ADDR_OPTIONS) / sizeof(MPU_ADDR_OPTIONS[0]);
+const byte TCA_CHANNELS[MPU_COUNT] = {0, 1, 2, 3};
+const byte CONTROLLED_SERVO_IDS[MPU_COUNT] = {0, 1, 3, 4};      // id logico del servo (orden de la app/telemetria, no cambia).
+const byte CONTROLLED_SERVO_CHANNELS[MPU_COUNT] = {10, 11, 13, 14}; // canal fisico PCA9685 reubicado al rango 10-15.
+const byte BUTTON_PINS[BUTTON_COUNT] = {4, 5, 6, 7};
+const byte BUTTON_ELBOW_INDEX[BUTTON_COUNT] = {0, 0, 1, 1};
+const int BUTTON_DIRECTIONS[BUTTON_COUNT] = {1, -1, 1, -1};
+const byte BUTTON_SERVO_IDS[ELBOW_COUNT] = {2, 5};             // id logico del codo (orden de la app/telemetria, no cambia).
+const byte BUTTON_SERVO_CHANNELS[ELBOW_COUNT] = {12, 15};      // canal fisico PCA9685 reubicado al rango 10-15.
+const bool INVERT_BUTTON[BUTTON_COUNT] = {false, false, false, false};
+const int MIN_ANGLE = 0;
+const int MAX_ANGLE = 270;
+const int SERVO_CENTER_ANGLE = 135;
+const int SHOULDER_SERVO_MIN_ANGLE = 45;
+const int SHOULDER_SERVO_MAX_ANGLE = 225;
+const int BUTTON_OPEN_ANGLE = 0;
+const int BUTTON_PRESSED_ANGLE = 90;
+const int BUTTON_STEP_ANGLE = 1;
+const unsigned long BUTTON_HOLD_START_MS = 250;
+const unsigned long BUTTON_STEP_INTERVAL_MS = 45;
+const int SERVO_MIN_US = 500;
+const int SERVO_MAX_US = 2500;
+const float SENSOR_MIN_DEG = -45.0;
+const float SENSOR_MAX_DEG = 45.0;
+const float FILTER_ALPHA = 1.00;
+const int LOOP_DELAY_MS = 20;
+const unsigned long STATUS_INTERVAL_MS = 1000;
+const unsigned long TELEMETRY_INTERVAL_MS = 100;
+const float RAD_TO_DEG_F = 57.2957795;
+enum SensorAxis {
+  AXIS_ROLL,
+  AXIS_PITCH
 };
-
-struct ServoCfg {                                                                     // Estructura ServoCfg: agrupa datos de control angular de servos.
-  uint8_t channel;                                                                    // Declaracion channel: dato de channel.
-  float minDeg;                                                                       // Declaracion minDeg: dato de control de servos.
-  float maxDeg;                                                                       // Declaracion maxDeg: dato de control de servos.
-  float homeDeg;                                                                      // Declaracion homeDeg: dato de control de servos.
-  int8_t direction;                                                                   // Declaracion direction: dato de direction.
-  int pwm0;                                                                           // Declaracion pwm0: dato de control de servos.
-  int pwm270;                                                                         // Declaracion pwm270: dato de control de servos.
-  float offsetDeg;                                                                    // Declaracion offsetDeg: dato de control de servos.
+const SensorAxis SENSOR_AXES[MPU_COUNT] = {
+  AXIS_ROLL,
+  AXIS_PITCH,
+  AXIS_ROLL,
+  AXIS_PITCH
 };
-
-struct ImuCfg {                                                                       // Estructura ImuCfg: agrupa datos de lectura de sensores IMU/I2C.
-  float neutralDeg;                                                                   // Declaracion neutralDeg: dato de control de servos.
-  float minDeg;                                                                       // Declaracion minDeg: dato de control de servos.
-  float maxDeg;                                                                       // Declaracion maxDeg: dato de control de servos.
-  bool invert;                                                                        // Declaracion invert: dato de invert.
+const bool INVERT_SENSOR[MPU_COUNT] = {
+  false,
+  false,
+  true,
+  true
 };
-
-struct As5600Cfg {                                                                    // Estructura As5600Cfg: agrupa calibracion de sensores AS5600.
-  int raw0;                                                                           // Declaracion raw0: lectura AS5600 para 0 grados.
-  int raw90;                                                                          // Declaracion raw90: lectura AS5600 para 90 grados.
-  float neutralDeg;                                                                   // Declaracion neutralDeg: dato de control de servos.
-  bool invert;                                                                        // Declaracion invert: dato de invert.
+bool mpuReady[MPU_COUNT] = {false, false, false, false};
+bool buttonReady[BUTTON_COUNT] = {false, false, false, false};
+bool buttonPressed[BUTTON_COUNT] = {false, false, false, false};
+bool buttonWasPressed[BUTTON_COUNT] = {false, false, false, false};
+byte detectedMpuAddresses[MPU_COUNT] = {
+  MPU6050_ADDR,
+  MPU6050_ADDR,
+  MPU6050_ADDR,
+  MPU6050_ADDR
 };
-
-struct CompFilter {                                                                   // Estructura CompFilter: agrupa datos de comp filter.
-  float angle = 0.0f;                                                                 // Variable angle: estado mutable de control angular de servos.
-  float deg = 0.0f;                                                                   // Variable deg: estado mutable de control angular de servos.
-  unsigned long lastUs = 0;                                                           // Variable lastUs: estado mutable de last us.
-  bool ready = false;                                                                 // Variable ready: estado mutable de ready.
-  bool degReady = false;                                                              // Variable degReady: estado mutable de control angular de servos.
+float filteredServoAngles[MPU_COUNT] = {
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE
 };
-
-struct ImuOffset {                                                                    // Estructura ImuOffset: agrupa datos de lectura de sensores IMU/I2C.
-  int16_t ax = 0;                                                                     // Variable ax: estado mutable de ax.
-  int16_t ay = 0;                                                                     // Variable ay: estado mutable de ay.
-  int16_t az = 0;                                                                     // Variable az: estado mutable de az.
-  int16_t gx = 0;                                                                     // Variable gx: estado mutable de gx.
-  int16_t gy = 0;                                                                     // Variable gy: estado mutable de gy.
-  int16_t gz = 0;                                                                     // Variable gz: estado mutable de gz.
+float filteredButtonServoAngles[ELBOW_COUNT] = {
+  BUTTON_OPEN_ANGLE,
+  BUTTON_OPEN_ANGLE
 };
-
-struct SensorLink {                                                                   // Estructura SensorLink: agrupa datos de sensor link.
-  uint8_t servoId;                                                                    // Declaracion servoId: dato de control de servos.
-  uint8_t sensorKind;                                                                 // Declaracion sensorKind: dato de sensor kind.
-  uint8_t sensorId;                                                                   // Declaracion sensorId: dato de sensor id.
+float lastMpuTiltDeg[MPU_COUNT] = {0, 0, 0, 0};
+float mpuZeroTiltDeg[MPU_COUNT] = {0, 0, 0, 0};
+int lastMpuServoAngles[MPU_COUNT] = {
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE,
+  SERVO_CENTER_ANGLE
 };
+int buttonServoAngles[ELBOW_COUNT] = {BUTTON_OPEN_ANGLE, BUTTON_OPEN_ANGLE};
+unsigned long buttonLastStepMs[BUTTON_COUNT] = {0, 0, 0, 0};
+unsigned long lastStatusMs = 0;
+unsigned long lastTelemetryMs = 0;
 
-ServoCfg servoCfg[N_SERVOS];                                                          // Arreglo servoCfg: coleccion ServoCfg para control de servos.
-ImuCfg imuCfg[NUM_IMUS];                                                              // Arreglo imuCfg: coleccion ImuCfg para sensores IMU.
-As5600Cfg as5600Cfg[NUM_AS5600];                                                      // Arreglo as5600Cfg: coleccion As5600Cfg para sensores AS5600.
-CompFilter cf[NUM_IMUS];                                                              // Arreglo cf: coleccion CompFilter para cf.
-ImuOffset imuOff[NUM_IMUS];                                                           // Arreglo imuOff: coleccion ImuOffset para sensores IMU.
+// =====================================================================
+// Verificaciones de subida (adaptadas del firmware S3 completo).
+// Bloque agregado: NO altera la logica del sketch nuevo, solo suma
+// rutinas de arranque (diagnostico I2C, inicio seguro sin PWM, resumen
+// PASS/FALLO) y re-deteccion de sensores caidos durante el loop.
+// =====================================================================
+const char* FW_VERSION = "VESTA-S3-buttons-1.1";             // Identifica el firmware subido en el resumen serial.
+const byte SAFE_ARM_PRIME_SAMPLES = 12;                      // Muestras de referencia tomadas sin PWM antes de permitir movimiento.
+const unsigned long SAFE_ARM_SETTLE_MS = 1200;               // Espera tras cmd_arm para estabilizar sensores antes de energizar.
+const uint8_t SENSOR_FAULT_LIMIT = 5;                        // Lecturas fallidas seguidas antes de marcar un sensor offline.
+const unsigned long SENSOR_RECHECK_INTERVAL_MS = 3000;       // Periodo para reintentar re-detectar sensores caidos.
+const unsigned long IDENTITY_INTERVAL_MS = 1000;             // Periodo de la baliza de identidad para que "Detectar" siempre encuentre la placa.
+unsigned long lastIdentityMs = 0;                            // Marca de tiempo de la ultima baliza de identidad enviada.
+String serialCmdBuffer = "";                                 // Acumula la linea de comando recibida por Serial desde la pagina tecnica.
+bool pcaOnline = false;                                      // Confirma que el PCA9685 respondio en el bus.
+bool servosArmed = false;                                    // Compuerta de seguridad: sin armado explicito no se envia PWM.
+bool servoArmPending = false;                                // cmd_arm recibido; se esta esperando estabilizacion antes de activar PWM.
+unsigned long servoArmStartMs = 0;                           // Marca de tiempo del inicio de armado seguro.
+uint8_t mpuFaults[MPU_COUNT] = {0, 0, 0, 0};                 // Contador de fallos de lectura por MPU.
+unsigned long lastSensorRecheckMs = 0;                       // Marca de tiempo de la ultima re-deteccion.
 
-float sensorDeg[N_SERVOS] = {0};                                                      // Arreglo sensorDeg: arreglo de datos para control angular de servos.
-float targetDeg[N_SERVOS] = {0};                                                      // Arreglo targetDeg: arreglo de datos para control angular de servos.
-float currentDeg[N_SERVOS] = {0};                                                     // Arreglo currentDeg: arreglo de datos para control angular de servos.
-float as5600Ema[NUM_AS5600] = {0};                                                    // Arreglo as5600Ema: lectura raw suavizada de sensores AS5600.
-float as5600BaseRaw[NUM_AS5600] = {0};                                                // Arreglo as5600BaseRaw: baseline de arranque para codos AS5600.
-int as5600Raw[NUM_AS5600] = {0};                                                      // Arreglo as5600Raw: lectura raw 0..4095 de sensores AS5600.
-bool as5600BaseReady[NUM_AS5600] = {false};                                           // Arreglo as5600BaseReady: baseline disponible para sensores AS5600.
-bool as5600EmaReady[NUM_AS5600] = {false};                                            // Arreglo as5600EmaReady: EMA inicializado para sensores AS5600.
-bool as5600Online[NUM_AS5600] = {false};                                              // Arreglo as5600Online: estado I2C de sensores AS5600.
-uint8_t as5600Faults[NUM_AS5600] = {0};                                               // Arreglo as5600Faults: fallas consecutivas de sensores AS5600.
-bool imuOnline[NUM_IMUS] = {false};                                                   // Arreglo imuOnline: arreglo de datos para lectura de sensores IMU/I2C.
-uint8_t imuFaults[NUM_IMUS] = {0};                                                    // Arreglo imuFaults: arreglo de datos para lectura de sensores IMU/I2C.
-// Por servo: ¿la última lectura del sensor enlazado fue válida?
-// Si es false, NO actualizamos el target desde el sensor (mantiene
-// posición segura). Esto evita tirones cuando una IMU/AS5600 se cae
-// y vuelve, y previene que el codo "se vaya" al energizar mientras
-// el EMA del AS5600 se asienta.
-bool sensorOnline[N_SERVOS] = {false};                                                // Arreglo sensorOnline: arreglo de datos para sensor online.
-
-String opMode = BOOT_MODE;                                                            // Variable opMode: estado mutable de op mode.
-float assistLevel = BOOT_ASSIST_LEVEL;                                                // Variable assistLevel: estado mutable de assist level.
-float deadbandDeg = CONTROL_DEADBAND_DEFAULT;                                         // Variable deadbandDeg: estado mutable de control angular de servos.
-float maxSpeedDegSec = CONTROL_MAX_SPEED_DEFAULT;                                     // Variable maxSpeedDegSec: estado mutable de control angular de servos.
-float smoothing = CONTROL_SMOOTHING_DEFAULT;                                          // Variable smoothing: estado mutable de smoothing.
-
-bool emergency = false;                                                               // Variable emergency: estado mutable de paro de emergencia.
-bool camOnline = false;                                                               // Variable camOnline: estado mutable de camara y video.
-bool pcaOnline = false;                                                               // Variable pcaOnline: confirma que el PCA9685 responde en el bus I2C.
-bool servosArmed = false;                                                             // Compuerta de seguridad: sin armado explicito no se envia PWM.
-bool wsStarted = false;                                                               // Variable wsStarted: estado mutable de comunicaciones y puertos.
-bool s3ApActive = false;                                                              // Variable s3ApActive: estado mutable de s3 ap active.
-unsigned long lastCamMs = 0;                                                          // Variable lastCamMs: estado mutable de lectura de sensores IMU/I2C.
-unsigned long tCtrl = 0;                                                              // Variable tCtrl: estado mutable de t ctrl.
-unsigned long tSend = 0;                                                              // Variable tSend: estado mutable de t send.
-unsigned long tWifiCheck = 0;                                                         // Variable tWifiCheck: estado mutable de comunicaciones y puertos.
-unsigned long tWifiRetry = 0;                                                         // Variable tWifiRetry: estado mutable de comunicaciones y puertos.
-unsigned long tAs5600Diag = 0;                                                        // Variable tAs5600Diag: estado mutable de sensores AS5600.
-bool wifiUp = false;                                                                  // Variable wifiUp: estado mutable de comunicaciones y puertos.
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-unsigned long tBleNotify = 0;                                                         // Variable tBleNotify: estado mutable de enlace BLE.
-uint8_t bleSeq = 0;                                                                   // Variable bleSeq: estado mutable de enlace BLE.
-bool bleConnected = false;                                                            // Variable bleConnected: estado mutable de enlace BLE.
-BLEServer* bleServer = nullptr;                                                       // Variable bleServer: estado mutable de enlace BLE.
-BLECharacteristic* bleTelemetryChar = nullptr;                                        // Variable bleTelemetryChar: estado mutable de enlace BLE.
-BLECharacteristic* bleStatusChar = nullptr;                                           // Variable bleStatusChar: estado mutable de enlace BLE.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-const uint8_t SERIAL_CLIENT = 255;                                                    // Variable SERIAL_CLIENT: constante usada en comunicaciones y puertos.
-String serialLine;                                                                    // Declaracion serialLine: dato de comunicaciones.
-
-const uint8_t SENSOR_KIND_IMU = 0;                                                    // Variable SENSOR_KIND_IMU: constante usada en lectura de sensores IMU/I2C.
-const uint8_t SENSOR_KIND_AS5600 = 1;                                                 // Variable SENSOR_KIND_AS5600: constante usada en sensores AS5600.
-
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-const uint8_t BLE_CMD_ANGLE = 1;                                                      // Variable BLE_CMD_ANGLE: constante usada en control angular de servos.
-const uint8_t BLE_CMD_MODE = 2;                                                       // Variable BLE_CMD_MODE: constante usada en enlace BLE.
-const uint8_t BLE_CMD_STOP = 3;                                                       // Variable BLE_CMD_STOP: constante usada en enlace BLE.
-const uint8_t BLE_CMD_RESET = 4;                                                      // Variable BLE_CMD_RESET: constante usada en enlace BLE.
-const uint8_t BLE_CMD_HOME = 5;                                                       // Variable BLE_CMD_HOME: constante usada en enlace BLE.
-const uint8_t BLE_CMD_STATUS = 6;                                                     // Variable BLE_CMD_STATUS: constante usada en enlace BLE.
-const uint8_t BLE_CMD_ASSIST = 7;                                                     // Variable BLE_CMD_ASSIST: constante usada en enlace BLE.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-// 4 shoulder servos follow MPU6050; 2 elbow servos follow AS5600 sensors.
-const SensorLink SENSOR_LINKS[N_SERVOS] = {
-  { SRV_L_LAT, SENSOR_KIND_IMU,  IMU_L_LAT },                                         // Elemento: entrada de inicializacion estructurada.
-  { SRV_L_FRO, SENSOR_KIND_IMU,  IMU_L_FRO },                                         // Elemento: entrada de inicializacion estructurada.
-  { SRV_L_ELB, SENSOR_KIND_AS5600, AS5600_L_ELB },                                    // Elemento: entrada de inicializacion estructurada.
-  { SRV_R_LAT, SENSOR_KIND_IMU,  IMU_R_LAT },                                         // Elemento: entrada de inicializacion estructurada.
-  { SRV_R_FRO, SENSOR_KIND_IMU,  IMU_R_FRO },                                         // Elemento: entrada de inicializacion estructurada.
-  { SRV_R_ELB, SENSOR_KIND_AS5600, AS5600_R_ELB }                                     // Elemento: entrada de inicializacion estructurada.
-};
-const float IMU_DEFAULT_MAX_DEG[NUM_IMUS] = {90, 120, 90, 120};                       // Arreglo IMU_DEFAULT_MAX_DEG: limites angulares por defecto para cada IMU.
-
-float clampServoDeg(int id, float deg);                                               // Funcion clampServoDeg: limita el angulo de servo a rangos seguros.
-void setEmergency(bool active, const char* reason);                                   // Funcion setEmergency: activa o limpia el estado de paro de emergencia.
-void applyBootBehavior();                                                             // Funcion applyBootBehavior: normaliza modo y asistencia al iniciar.
-void savePrefs();                                                                     // Funcion savePrefs: guarda calibracion persistida en memoria no volatil.
-void sendAck(uint8_t client);                                                         // Funcion sendAck: envia ack.
-void sendData();                                                                      // Funcion sendData: emite telemetria completa del controlador.
-void processCmd(const String& json, uint8_t client);                                  // Funcion processCmd: interpreta comandos JSON entrantes.
-void sendI2CDiagnostic(uint8_t client);                                               // Funcion sendI2CDiagnostic: envia i2 cdiagnostic.
-void syncServoStateToCurrentSensors();                                                // Funcion syncServoStateToCurrentSensors: prepara armado sin salto a home.
-void releaseServos();                                                                 // Funcion releaseServos: libera PWM en todos los canales.
-void armServos(const char* reason);                                                   // Funcion armServos: habilita PWM por orden explicita.
-void disarmServos(const char* reason);                                                // Funcion disarmServos: deshabilita PWM por orden explicita.
-void startWebSocketServer();                                                          // Funcion startWebSocketServer: inicia web socket server.
-bool setupMpu(uint8_t idx);                                                           // Funcion setupMpu: inicializa y valida una MPU6050.
-
-bool sensorsEnabled() {                                                               // Funcion sensorsEnabled: habilita o aisla lecturas de sensores.
-#if SENSORLESS_SERVO_TEST
-  return false;                                                                       // Retorno: prueba de servos sin IMU/AS5600.
-#else                                                                                 // Directiva de compilacion: activa codigo segun configuracion.
-  return true;                                                                        // Retorno: comportamiento normal con sensores.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
+// Funcion       | deviceFound: comprueba si un dispositivo I2C responde en una direccion.
+bool deviceFound(int address) {
+  Wire.beginTransmission(address);
+  return Wire.endTransmission() == 0;
 }
-
-const char* normalizeRequestedMode(const char* requested) {                           // Funcion normalizeRequestedMode: fuerza modo seguro segun configuracion.
-#if SENSORLESS_SERVO_TEST
-  (void)requested;
-  return "manual";                                                                    // Retorno: en prueba sin sensores solo se acepta control manual.
-#else                                                                                 // Directiva de compilacion: activa codigo segun configuracion.
-  if (!requested) return "manual";                                                     // Condicion: modo vacio cae a manual.
-  if (!strcmp(requested, "manual") || !strcmp(requested, "assisted") || !strcmp(requested, "automatic")) {
-    return requested;                                                                 // Retorno: informa resultado de la operacion.
+// Funcion       | printHexAddress: imprime direcciones I2C en formato hexadecimal legible.
+void printHexAddress(byte address) {
+  Serial.print("0x");
+  if (address < 16) {
+    Serial.print("0");
   }
-  return "manual";                                                                    // Retorno: modo invalido cae a manual.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
+  Serial.print(address, HEX);
 }
-
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-uint8_t modeCode() {                                                                  // Funcion modeCode: convierte el modo textual a codigo BLE compacto.
-  if (opMode == "manual") return 0;                                                   // Condicion: valida estado de hardware o comando.
-  if (opMode == "assisted") return 1;                                                 // Condicion: valida estado de hardware o comando.
-  if (opMode == "automatic") return 2;                                                // Condicion: valida estado de hardware o comando.
-  if (opMode == "emergency") return 3;                                                // Condicion: valida estado de hardware o comando.
-  return 255;                                                                         // Retorno: informa resultado de la operacion.
+// Funcion       | isKnownMpuId: valida identificadores conocidos de sensores MPU.
+bool isKnownMpuId(byte id) {
+  return id == 0x68 || id == 0x70 || id == 0x71;
 }
-
-const char* modeFromCode(uint8_t code) {                                             // Funcion modeFromCode: convierte codigo BLE de modo a cadena de texto.
-#if SENSORLESS_SERVO_TEST
-  (void)code;
-  return "manual";                                                                    // Retorno: BLE tambien queda aislado de modos con sensores.
-#else                                                                                 // Directiva de compilacion: activa codigo segun configuracion.
-  switch (code) {                                                                     // Selector: despacha por tipo de evento o comando.
-    case 0: return "manual";                                                          // Caso: evento o comando especifico.
-    case 1: return "assisted";                                                        // Caso: evento o comando especifico.
-    case 2: return "automatic";                                                       // Caso: evento o comando especifico.
-    default: return "manual";                                                         // Campo default: dato miembro de estructura o JSON.
-  }
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-}
-
-void appendI16(uint8_t* buffer, size_t& offset, int16_t value) {                      // Funcion appendI16: escribe enteros de 16 bits little-endian en un buffer.
-  buffer[offset++] = (uint8_t)(value & 0xff);                                         // Asignacion: actualiza estado del firmware.
-  buffer[offset++] = (uint8_t)((value >> 8) & 0xff);                                  // Asignacion: actualiza estado del firmware.
-}
-
-int16_t readI16(const uint8_t* buffer, size_t offset) {                               // Funcion readI16: lee enteros de 16 bits little-endian desde un buffer.
-  return (int16_t)((uint16_t)buffer[offset] | ((uint16_t)buffer[offset + 1] << 8));   // Retorno: informa resultado de la operacion.
-}
-
-void updateBleStatusValue() {                                                         // Funcion updateBleStatusValue: actualiza la caracteristica BLE de estado.
-  if (!bleStatusChar) return;                                                         // Condicion: valida estado de hardware o comando.
-  JsonDocument doc;                                                                   // Declaracion doc: dato de doc.
-  doc["type"] = "ble_status";                                                         // Asignacion: actualiza estado del firmware.
-  doc["fw"] = "VESTA-S3-3.3";                                                         // Asignacion: actualiza estado del firmware.
-  doc["role"] = "controller";                                                         // Asignacion: actualiza estado del firmware.
-  doc["name"] = BLE_DEVICE_NAME;                                                      // Asignacion: actualiza estado del firmware.
-  doc["service"] = BLE_SERVICE_UUID;                                                  // Asignacion: actualiza estado del firmware.
-  doc["connected"] = bleConnected;                                                    // Asignacion: actualiza estado del firmware.
-  doc["mode"] = opMode;                                                               // Asignacion: actualiza estado del firmware.
-  doc["emergency"] = emergency;                                                       // Asignacion: actualiza estado del firmware.
-  doc["armed"] = servosArmed;                                                         // Asignacion: reporta si el PWM de servos esta habilitado.
-  doc["camOnline"] = camOnline;                                                       // Asignacion: actualiza estado del firmware.
-  doc["sensorless"] = !sensorsEnabled();                                               // Asignacion: informa si IMU/AS5600 estan aislados.
-  String out;                                                                         // Declaracion out: dato de out.
-  serializeJson(doc, out);                                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-  bleStatusChar->setValue(out.c_str());
-}
-
-void sendBleTelemetry(bool force = false) {                                           // Funcion sendBleTelemetry: publica telemetria compacta por BLE.
-  if (!bleConnected || !bleTelemetryChar) return;                                     // Condicion: valida estado de hardware o comando.
-  const unsigned long now = millis();                                                 // Variable now: constante usada en now.
-  if (!force && now - tBleNotify < BLE_NOTIFY_MS) return;                             // Condicion: valida estado de hardware o comando.
-  tBleNotify = now;                                                                   // Asignacion: actualiza estado del firmware.
-
-  uint8_t payload[64];                                                                // Arreglo payload: coleccion de payload.
-  size_t offset = 0;                                                                  // Variable offset: estado mutable de offset.
-  payload[offset++] = 'V';                                                            // Asignacion: actualiza estado del firmware.
-  payload[offset++] = 'T';                                                            // Asignacion: actualiza estado del firmware.
-  payload[offset++] = 1;                                                              // Asignacion: actualiza estado del firmware.
-  payload[offset++] = 0;                                                              // Asignacion: actualiza estado del firmware.
-  payload[offset++] = modeCode();                                                     // Asignacion: actualiza estado del firmware.
-  payload[offset++] = emergency ? 1 : 0;                                              // Asignacion: actualiza estado del firmware.
-  payload[offset++] = camOnline ? 1 : 0;                                              // Asignacion: actualiza estado del firmware.
-  payload[offset++] = bleSeq++;                                                       // Asignacion: actualiza estado del firmware.
-
-  for (int i = 0; i < N_SERVOS; i++) appendI16(payload, offset, (int16_t)roundf(currentDeg[i] * 10.0f)); // Bucle: recorre muestras, servos o clientes.
-  for (int i = 0; i < N_SERVOS; i++) appendI16(payload, offset, (int16_t)roundf(targetDeg[i] * 10.0f)); // Bucle: recorre muestras, servos o clientes.
-  for (int i = 0; i < N_SERVOS; i++) appendI16(payload, offset, (int16_t)roundf(sensorDeg[i] * 10.0f)); // Bucle: recorre muestras, servos o clientes.
-
-  bleTelemetryChar->setValue(payload, offset);
-  bleTelemetryChar->notify();
-  updateBleStatusValue();                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void processBleBinaryCommand(const uint8_t* data, size_t len) {                       // Funcion processBleBinaryCommand: interpreta comandos BLE binarios.
-  if (len < 8 || data[0] != 'V' || data[1] != 'C' || data[2] != 1) return;            // Condicion: valida estado de hardware o comando.
-  const uint8_t type = data[3];                                                       // Variable type: constante usada en type.
-  const uint8_t id = data[4];                                                         // Variable id: constante usada en id.
-  const int16_t value = readI16(data, 6);                                             // Variable value: constante usada en value.
-
-  if (type == BLE_CMD_ANGLE) {                                                        // Condicion: valida estado de hardware o comando.
-    if (!emergency && id < N_SERVOS) {                                                // Condicion: valida estado de hardware o comando.
-      // Misma logica que el cmd_angle por WS/Serial: control directo de un
-      // servo implica modo manual, sino el lazo asistido pisa el target.
-      if (opMode != "manual") opMode = "manual";                                      // Condicion: valida estado de hardware o comando.
-      targetDeg[id] = clampServoDeg(id, value / 10.0f);                               // Asignacion: actualiza estado del firmware.
-      armServos("ble angle");                                                         // Llamada: movimiento manual explicito habilita PWM.
-    }
-  } else if (type == BLE_CMD_MODE) {
-    if (!emergency) {
-      opMode = String(modeFromCode((uint8_t)value));                                  // Condicion: valida estado de hardware o comando.
-      if (opMode != "manual") {
-        syncServoStateToCurrentSensors();                                             // Llamada: evita salto a home al entrar a modo con sensores.
-        armServos("ble mode");                                                        // Condicion: assisted/automatic son inicio explicito.
-      }
-    }
-  } else if (type == BLE_CMD_STOP) {
-    setEmergency(true, "ble command");                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (type == BLE_CMD_RESET) {
-    // Sin boton fisico de paro: el reset remoto siempre procede.
-    setEmergency(false, "ble reset");                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-    applyBootBehavior();                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-    disarmServos("ble reset");                                                        // Llamada: reset vuelve a estado seguro sin mover a home.
-  } else if (type == BLE_CMD_HOME) {
-    for (int i = 0; i < N_SERVOS; i++) targetDeg[i] = servoCfg[i].homeDeg;            // Bucle: recorre muestras, servos o clientes.
-    armServos("ble home");                                                            // Llamada: home es movimiento explicito.
-  } else if (type == BLE_CMD_STATUS) {
-    sendBleTelemetry(true);                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (type == BLE_CMD_ASSIST) {
-    assistLevel = constrain(value / 1000.0f, 0.0f, 1.0f);                             // Asignacion: actualiza estado del firmware.
-    savePrefs();                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  sendBleTelemetry(true);                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void processBleCommand(const uint8_t* data, size_t len) {                             // Funcion processBleCommand: despacha comandos BLE JSON o binarios.
-  if (!data || !len) return;                                                          // Condicion: valida estado de hardware o comando.
-  if (data[0] == '{') {                                                               // Condicion: valida estado de hardware o comando.
-    String json;                                                                      // Declaracion json: dato de json.
-    json.reserve(len);                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-    for (size_t i = 0; i < len; i++) json += (char)data[i];                           // Bucle: recorre muestras, servos o clientes.
-    processCmd(json, SERIAL_CLIENT);                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-    sendBleTelemetry(true);                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-    return;                                                                           // Retorno: informa resultado de la operacion.
-  }
-  processBleBinaryCommand(data, len);                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-class VestaBleServerCallbacks : public BLEServerCallbacks {                           // Clase VestaBleServerCallbacks: agrupa datos de enlace BLE.
-  void onConnect(BLEServer*) override {
-    bleConnected = true;                                                              // Asignacion: actualiza estado del firmware.
-    updateBleStatusValue();                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-    sendBleTelemetry(true);                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  void onDisconnect(BLEServer*) override {
-    bleConnected = false;                                                             // Asignacion: actualiza estado del firmware.
-    updateBleStatusValue();                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-    BLEDevice::startAdvertising();                                                    // Campo BLEDevice: dato miembro de estructura o JSON.
-  }
-};
-
-class VestaBleCommandCallbacks : public BLECharacteristicCallbacks {                  // Clase VestaBleCommandCallbacks: agrupa datos de enlace BLE.
-  void onWrite(BLECharacteristic* characteristic) override {
-    String value = characteristic->getValue();                                        // Variable value: estado mutable de value.
-    processBleCommand((const uint8_t*)value.c_str(), value.length());                 // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-};
-
-void setupBle() {                                                                     // Funcion setupBle: inicializa servicio y caracteristicas BLE.
-  BLEDevice::init(BLE_DEVICE_NAME);                                                   // Campo BLEDevice: dato miembro de estructura o JSON.
-  BLEDevice::setMTU(BLE_MTU);                                                         // Campo BLEDevice: dato miembro de estructura o JSON.
-
-  bleServer = BLEDevice::createServer();                                              // Asignacion: actualiza estado del firmware.
-  bleServer->setCallbacks(new VestaBleServerCallbacks());
-  BLEService* service = bleServer->createService(BLE_SERVICE_UUID);
-
-  BLECharacteristic* commandChar = service->createCharacteristic(                     // Variable commandChar: estado mutable de command char.
-    BLE_COMMAND_CHAR_UUID,
-    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR          // Campo BLECharacteristic: dato miembro de estructura o JSON.
-  );
-  commandChar->setCallbacks(new VestaBleCommandCallbacks());
-
-  bleTelemetryChar = service->createCharacteristic(                                   // Asignacion: actualiza estado del firmware.
-    BLE_TELEMETRY_CHAR_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY             // Campo BLECharacteristic: dato miembro de estructura o JSON.
-  );
-  bleTelemetryChar->addDescriptor(new BLE2902());
-
-  bleStatusChar = service->createCharacteristic(                                      // Asignacion: actualiza estado del firmware.
-    BLE_STATUS_CHAR_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY             // Campo BLECharacteristic: dato miembro de estructura o JSON.
-  );
-  bleStatusChar->addDescriptor(new BLE2902());
-
-  updateBleStatusValue();                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-  service->start();
-
-  BLEAdvertising* advertising = BLEDevice::getAdvertising();
-  advertising->addServiceUUID(BLE_SERVICE_UUID);
-  advertising->setScanResponse(true);
-  advertising->setMinPreferred(BLE_MIN_CONN_INTERVAL);
-  advertising->setMaxPreferred(BLE_MAX_CONN_INTERVAL);
-  BLEDevice::startAdvertising();                                                      // Campo BLEDevice: dato miembro de estructura o JSON.
-  Serial.printf("[BLE] %s advertising service %s\n", BLE_DEVICE_NAME, BLE_SERVICE_UUID); // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-void setDefaults() {                                                                  // Funcion setDefaults: carga valores base de servos, IMU y AS5600.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    servoCfg[i].channel = i;                                                          // Asignacion: actualiza estado del firmware.
-    servoCfg[i].minDeg = SRV_HARD_MIN[i];                                             // Asignacion: actualiza estado del firmware.
-    servoCfg[i].maxDeg = SRV_HARD_MAX[i];                                             // Asignacion: actualiza estado del firmware.
-    servoCfg[i].homeDeg = 0;                                                          // Asignacion: actualiza estado del firmware.
-    servoCfg[i].direction = 1;                                                        // Asignacion: actualiza estado del firmware.
-    servoCfg[i].pwm0 = PWM_MIN_TICK;                                                  // Asignacion: actualiza estado del firmware.
-    servoCfg[i].pwm270 = PWM_MAX_TICK;                                                // Asignacion: actualiza estado del firmware.
-    servoCfg[i].offsetDeg = 0;                                                        // Asignacion: actualiza estado del firmware.
-  }
-
-  for (int i = 0; i < NUM_IMUS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    imuCfg[i].neutralDeg = 0;                                                         // Asignacion: actualiza estado del firmware.
-    imuCfg[i].minDeg = 0;                                                             // Asignacion: actualiza estado del firmware.
-    imuCfg[i].maxDeg = IMU_DEFAULT_MAX_DEG[i];                                        // Asignacion: actualiza estado del firmware.
-    imuCfg[i].invert = false;                                                         // Asignacion: actualiza estado del firmware.
-  }
-
-  for (int i = 0; i < NUM_AS5600; i++) {                                              // Bucle: recorre muestras, servos o clientes.
-    as5600Cfg[i].raw0 = AS5600_RAW_0DEG_DEFAULT;                                      // Asignacion: actualiza estado del firmware.
-    as5600Cfg[i].raw90 = AS5600_RAW_90DEG_DEFAULT;                                    // Asignacion: actualiza estado del firmware.
-    as5600Cfg[i].neutralDeg = 0;                                                      // Asignacion: actualiza estado del firmware.
-    as5600Cfg[i].invert = false;                                                      // Asignacion: actualiza estado del firmware.
+// Funcion       | printMpuIdName: traduce el identificador MPU a texto de diagnostico.
+void printMpuIdName(byte id) {
+  if (id == 0x68) {
+    Serial.print("MPU6050");
+  } else if (id == 0x70) {
+    Serial.print("MPU6500 compatible");
+  } else if (id == 0x71) {
+    Serial.print("MPU9250 compatible");
+  } else {
+    Serial.print("chip compatible no identificado");
   }
 }
-
-float finiteOrDefault(float value, float fallback) {                                  // Funcion finiteOrDefault: descarta NaN/inf de perfiles guardados.
-  return isfinite(value) ? value : fallback;                                          // Retorno: informa resultado de la operacion.
-}
-
-int safePwmTick(int value, int fallback) {                                            // Funcion safePwmTick: limita ticks PWM a una ventana segura de servo.
-  if (value < 80 || value > 600) return fallback;                                     // Condicion: evita perfiles corruptos que apaguen la salida PWM.
-  return value;                                                                       // Retorno: informa resultado de la operacion.
-}
-
-void sanitizeServoConfig(int id) {                                                    // Funcion sanitizeServoConfig: normaliza limites y PWM de un servo.
-  if (id < 0 || id >= N_SERVOS) return;                                               // Condicion: valida indice de servo.
-  servoCfg[id].channel = (uint8_t)constrain((int)servoCfg[id].channel, 0, 15);        // Asignacion: limita canal PCA9685.
-  servoCfg[id].minDeg = constrain(finiteOrDefault(servoCfg[id].minDeg, SRV_HARD_MIN[id]), SRV_HARD_MIN[id], SRV_HARD_MAX[id]);
-  servoCfg[id].maxDeg = constrain(finiteOrDefault(servoCfg[id].maxDeg, SRV_HARD_MAX[id]), SRV_HARD_MIN[id], SRV_HARD_MAX[id]);
-  if (servoCfg[id].maxDeg <= servoCfg[id].minDeg) {                                  // Condicion: evita rango angular cerrado o invertido.
-    servoCfg[id].minDeg = SRV_HARD_MIN[id];                                          // Asignacion: restaura minimo seguro.
-    servoCfg[id].maxDeg = SRV_HARD_MAX[id];                                          // Asignacion: restaura maximo seguro.
+// Funcion       | tcaSelect: habilita un canal especifico del multiplexor TCA9548A.
+bool tcaSelect(byte channel) {
+  if (channel > 7) {
+    return false;
   }
-  servoCfg[id].homeDeg = constrain(finiteOrDefault(servoCfg[id].homeDeg, servoCfg[id].minDeg), servoCfg[id].minDeg, servoCfg[id].maxDeg);
-  servoCfg[id].direction = servoCfg[id].direction < 0 ? -1 : 1;                      // Asignacion: normaliza direccion.
-  servoCfg[id].pwm0 = safePwmTick(servoCfg[id].pwm0, PWM_MIN_TICK);                  // Asignacion: protege pulso 0 grados.
-  servoCfg[id].pwm270 = safePwmTick(servoCfg[id].pwm270, PWM_MAX_TICK);              // Asignacion: protege pulso 270 grados.
-  if (abs(servoCfg[id].pwm270 - servoCfg[id].pwm0) < 10) {                           // Condicion: evita pulso fijo que parece servo apagado.
-    servoCfg[id].pwm0 = PWM_MIN_TICK;                                                // Asignacion: restaura pulso minimo.
-    servoCfg[id].pwm270 = PWM_MAX_TICK;                                              // Asignacion: restaura pulso maximo.
+  Wire.beginTransmission(TCA9548A_ADDR);
+  Wire.write(1 << channel);
+  return Wire.endTransmission() == 0;
+}
+// Agregado: desactiva todos los canales del TCA9548A para escanear el bus raiz.
+// Funcion       | tcaDisableAll: apaga todos los canales del TCA9548A.
+void tcaDisableAll() {
+  Wire.beginTransmission(TCA9548A_ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+}
+// Funcion       | writeMpuRegister: escribe un registro de configuracion del MPU.
+bool writeMpuRegister(byte address, byte reg, byte value) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+// Funcion       | readMpuRegister: lee un registro individual del MPU.
+bool readMpuRegister(byte address, byte reg, byte *value) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
   }
-  servoCfg[id].offsetDeg = constrain(finiteOrDefault(servoCfg[id].offsetDeg, 0.0f), -90.0f, 90.0f);
-}
-
-void sanitizeTuning() {                                                               // Funcion sanitizeTuning: impide que la rampa deje los servos inmoviles.
-  assistLevel = constrain(finiteOrDefault(assistLevel, BOOT_ASSIST_LEVEL), 0.0f, 1.0f);
-  deadbandDeg = constrain(finiteOrDefault(deadbandDeg, CONTROL_DEADBAND_DEFAULT), 0.0f, 30.0f);
-  smoothing = constrain(finiteOrDefault(smoothing, CONTROL_SMOOTHING_DEFAULT), 0.05f, 1.0f);
-  maxSpeedDegSec = constrain(finiteOrDefault(maxSpeedDegSec, CONTROL_MAX_SPEED_DEFAULT), 5.0f, CONTROL_MAX_SPEED_DEFAULT);
-  if (assistLevel < BOOT_ASSIST_LEVEL) assistLevel = BOOT_ASSIST_LEVEL;               // Mantiene fuerza aunque existan preferencias viejas.
-  if (deadbandDeg > CONTROL_DEADBAND_DEFAULT) deadbandDeg = CONTROL_DEADBAND_DEFAULT; // Mantiene sensibilidad aunque existan preferencias viejas.
-  if (smoothing < CONTROL_SMOOTHING_DEFAULT || smoothing > CONTROL_SMOOTHING_DEFAULT) smoothing = CONTROL_SMOOTHING_DEFAULT; // Fuerza respuesta directa aunque existan preferencias viejas.
-  if (maxSpeedDegSec < CONTROL_MAX_SPEED_DEFAULT) maxSpeedDegSec = CONTROL_MAX_SPEED_DEFAULT;
-}
-
-void sanitizeRuntimeConfig() {                                                        // Funcion sanitizeRuntimeConfig: sanea todo lo cargado desde NVS/app.
-  sanitizeTuning();                                                                   // Llamada: normaliza parametros de rampa.
-  for (int i = 0; i < N_SERVOS; i++) sanitizeServoConfig(i);                         // Bucle: normaliza todos los servos.
-}
-
-void applyTuningObject(JsonObject tuning) {                                           // Funcion applyTuningObject: aplica asistencia, zona muerta, suavizado y velocidad.
-  if (tuning.isNull()) return;                                                        // Condicion: ignora comandos sin tuning.
-  if (!tuning["assistLevel"].isNull()) assistLevel = tuning["assistLevel"].as<float>();
-  else if (!tuning["level"].isNull()) assistLevel = tuning["level"].as<float>();      // Compatibilidad con cmd_assist.
-  if (!tuning["deadbandDeg"].isNull()) deadbandDeg = tuning["deadbandDeg"].as<float>();
-  if (!tuning["smoothing"].isNull()) smoothing = tuning["smoothing"].as<float>();
-  if (!tuning["maxSpeedDegSec"].isNull()) maxSpeedDegSec = tuning["maxSpeedDegSec"].as<float>();
-  sanitizeTuning();                                                                   // Llamada: evita valores viejos que vuelvan lenta la rampa.
-}
-
-void loadPrefs() {                                                                    // Funcion loadPrefs: lee calibracion persistida en memoria no volatil.
-  setDefaults();                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-  prefs.begin("vesta", true);                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-  assistLevel = prefs.getFloat("assist", assistLevel);                                // Asignacion: actualiza estado del firmware.
-  deadbandDeg = prefs.getFloat("deadband", deadbandDeg);                              // Asignacion: actualiza estado del firmware.
-  smoothing = prefs.getFloat("smooth", smoothing);                                    // Asignacion: actualiza estado del firmware.
-  maxSpeedDegSec = prefs.getFloat("maxspd", maxSpeedDegSec);                          // Asignacion: actualiza estado del firmware.
-
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    char key[18];                                                                     // Arreglo key: coleccion de key.
-    // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_ch", i); servoCfg[i].channel = (uint8_t)constrain(prefs.getInt(key, servoCfg[i].channel), 0, 15);
-    snprintf(key, sizeof(key), "s%d_min", i); servoCfg[i].minDeg = prefs.getFloat(key, servoCfg[i].minDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_max", i); servoCfg[i].maxDeg = prefs.getFloat(key, servoCfg[i].maxDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_home", i); servoCfg[i].homeDeg = prefs.getFloat(key, servoCfg[i].homeDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_dir", i); servoCfg[i].direction = prefs.getChar(key, servoCfg[i].direction); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_p0", i); servoCfg[i].pwm0 = prefs.getInt(key, servoCfg[i].pwm0); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_p270", i); servoCfg[i].pwm270 = prefs.getInt(key, servoCfg[i].pwm270); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_off", i); servoCfg[i].offsetDeg = prefs.getFloat(key, servoCfg[i].offsetDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
+  if (Wire.requestFrom((int)address, 1) != 1) {
+    return false;
   }
-
-  for (int i = 0; i < NUM_IMUS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    char key[18];                                                                     // Arreglo key: coleccion de key.
-    snprintf(key, sizeof(key), "i%d_neu", i); imuCfg[i].neutralDeg = prefs.getFloat(key, imuCfg[i].neutralDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "i%d_min", i); imuCfg[i].minDeg = prefs.getFloat(key, imuCfg[i].minDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "i%d_max", i); imuCfg[i].maxDeg = prefs.getFloat(key, imuCfg[i].maxDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "i%d_inv", i); imuCfg[i].invert = prefs.getBool(key, imuCfg[i].invert); // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  for (int i = 0; i < NUM_AS5600; i++) {                                              // Bucle: recorre muestras, servos o clientes.
-    char key[18];                                                                     // Arreglo key: coleccion de key.
-    snprintf(key, sizeof(key), "a%d_r0", i); as5600Cfg[i].raw0 = prefs.getInt(key, as5600Cfg[i].raw0); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "a%d_r90", i); as5600Cfg[i].raw90 = prefs.getInt(key, as5600Cfg[i].raw90); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "a%d_neu", i); as5600Cfg[i].neutralDeg = prefs.getFloat(key, as5600Cfg[i].neutralDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "a%d_inv", i); as5600Cfg[i].invert = prefs.getBool(key, as5600Cfg[i].invert); // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-  prefs.end();                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  sanitizeRuntimeConfig();                                                            // Llamada: protege contra perfiles corruptos guardados.
+  *value = Wire.read();
+  return true;
 }
-
-void savePrefs() {                                                                    // Funcion savePrefs: guarda calibracion persistida en memoria no volatil.
-  sanitizeRuntimeConfig();                                                            // Llamada: solo persiste parametros seguros.
-  prefs.begin("vesta", false);                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  prefs.putFloat("assist", assistLevel);                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-  prefs.putFloat("deadband", deadbandDeg);                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-  prefs.putFloat("smooth", smoothing);                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  prefs.putFloat("maxspd", maxSpeedDegSec);                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    char key[18];                                                                     // Arreglo key: coleccion de key.
-    snprintf(key, sizeof(key), "s%d_ch", i); prefs.putInt(key, servoCfg[i].channel);  // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_min", i); prefs.putFloat(key, servoCfg[i].minDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_max", i); prefs.putFloat(key, servoCfg[i].maxDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_home", i); prefs.putFloat(key, servoCfg[i].homeDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_dir", i); prefs.putChar(key, servoCfg[i].direction); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_p0", i); prefs.putInt(key, servoCfg[i].pwm0);     // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_p270", i); prefs.putInt(key, servoCfg[i].pwm270); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "s%d_off", i); prefs.putFloat(key, servoCfg[i].offsetDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
+// Funcion       | readMpuBytes: lee bloques de bytes consecutivos del MPU.
+bool readMpuBytes(byte address, byte reg, byte *buffer, byte length) {
+  Wire.beginTransmission(address);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
   }
-
-  for (int i = 0; i < NUM_IMUS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    char key[18];                                                                     // Arreglo key: coleccion de key.
-    snprintf(key, sizeof(key), "i%d_neu", i); prefs.putFloat(key, imuCfg[i].neutralDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "i%d_min", i); prefs.putFloat(key, imuCfg[i].minDeg);  // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "i%d_max", i); prefs.putFloat(key, imuCfg[i].maxDeg);  // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "i%d_inv", i); prefs.putBool(key, imuCfg[i].invert);   // Llamada: ejecuta API de hardware, red o utilidad local.
+  if (Wire.requestFrom((int)address, (int)length) != length) {
+    return false;
   }
-
-  for (int i = 0; i < NUM_AS5600; i++) {                                              // Bucle: recorre muestras, servos o clientes.
-    char key[18];                                                                     // Arreglo key: coleccion de key.
-    snprintf(key, sizeof(key), "a%d_r0", i); prefs.putInt(key, as5600Cfg[i].raw0);    // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "a%d_r90", i); prefs.putInt(key, as5600Cfg[i].raw90);  // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "a%d_neu", i); prefs.putFloat(key, as5600Cfg[i].neutralDeg); // Llamada: ejecuta API de hardware, red o utilidad local.
-    snprintf(key, sizeof(key), "a%d_inv", i); prefs.putBool(key, as5600Cfg[i].invert); // Llamada: ejecuta API de hardware, red o utilidad local.
+  for (byte i = 0; i < length; i++) {
+    buffer[i] = Wire.read();
   }
-  prefs.end();                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
+  return true;
 }
-
-void applyBootBehavior() {                                                            // Funcion applyBootBehavior: normaliza modo y asistencia al iniciar.
-  opMode = String(normalizeRequestedMode(BOOT_MODE));                                 // Asignacion: arranca manual si la prueba sin sensores esta activa.
-  sanitizeTuning();                                                                    // Llamada: normaliza asistencia y rampa.
-}
-
-bool i2cPing(uint8_t addr) {                                                          // Funcion i2cPing: comprueba presencia de un dispositivo I2C.
-  Wire.beginTransmission(addr);                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-  return Wire.endTransmission() == 0;                                                 // Retorno: informa resultado de la operacion.
-}
-
-bool tcaSel(uint8_t ch) {                                                             // Funcion tcaSel: selecciona un canal del multiplexor TCA9548A.
-  Wire.beginTransmission(TCA_ADDR);                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.write(ch < 8 ? (1 << ch) : 0x00);                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-  return Wire.endTransmission() == 0;                                                 // Retorno: informa resultado de la operacion.
-}
-
-void tcaOff() {                                                                       // Funcion tcaOff: desactiva todos los canales del TCA9548A.
-  Wire.beginTransmission(TCA_ADDR);                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.write(0x00);                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.endTransmission();                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-// Returns the IMU index (0..NUM_IMUS-1) that is physically wired to the given
-// TCA9548A channel, or -1 if no IMU uses that channel.
-int imuIndexForChannel(uint8_t ch) {                                                  // Funcion imuIndexForChannel: encapsula la logica de lectura de sensores IMU/I2C.
-  for (int i = 0; i < NUM_IMUS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    if (IMU_TCA_CHANNEL[i] == ch) return i;                                           // Condicion: valida estado de hardware o comando.
+// Funcion       | initMpuRegisters: inicializa rango y filtros basicos del MPU.
+bool initMpuRegisters(byte address) {
+  if (!writeMpuRegister(address, MPU_REG_PWR_MGMT_1, 0x80)) {
+    return false;
   }
-  return -1;                                                                          // Retorno: informa resultado de la operacion.
+  delay(100);
+  return writeMpuRegister(address, MPU_REG_PWR_MGMT_1, 0x01) &&
+         writeMpuRegister(address, MPU_REG_SMPLRT_DIV, 0x00) &&
+         writeMpuRegister(address, MPU_REG_CONFIG, 0x03) &&
+         writeMpuRegister(address, MPU_REG_GYRO_CONFIG, 0x08) &&
+         writeMpuRegister(address, MPU_REG_ACCEL_CONFIG, 0x08);
 }
-
-int as5600IndexForChannel(uint8_t ch) {                                               // Funcion as5600IndexForChannel: resuelve el AS5600 conectado a un canal TCA.
-  for (int i = 0; i < NUM_AS5600; i++) {                                              // Bucle: recorre muestras, servos o clientes.
-    if (AS5600_TCA_CHANNEL[i] == ch) return i;                                        // Condicion: valida estado de hardware o comando.
-  }
-  return -1;                                                                          // Retorno: informa resultado de la operacion.
-}
-
-uint8_t scanI2CAddresses(uint8_t* addresses, uint8_t capacity) {                      // Funcion scanI2CAddresses: escanea direcciones I2C disponibles.
-  uint8_t found = 0;                                                                  // Variable found: estado mutable de found.
-  uint8_t stored = 0;                                                                 // Variable stored: estado mutable de stored.
-  for (uint8_t addr = 1; addr < 0x7f; addr++) {                                       // Bucle: recorre muestras, servos o clientes.
-    Wire.beginTransmission(addr);                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-    uint8_t err = Wire.endTransmission();                                             // Variable err: estado mutable de err.
-    if (err == 0) {                                                                   // Condicion: valida estado de hardware o comando.
-      if (addresses && stored < capacity) addresses[stored++] = addr;                 // Condicion: valida estado de hardware o comando.
-      found++;
-    }
-    delayMicroseconds(100);                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-  return found;                                                                       // Retorno: informa resultado de la operacion.
-}
-
-void scanI2CDevices(const char* label) {                                              // Funcion scanI2CDevices: reporta dispositivos I2C detectados.
-  uint8_t addresses[16] = {0};                                                        // Arreglo addresses: arreglo de datos para addresses.
-  uint8_t found = scanI2CAddresses(addresses, sizeof(addresses));                     // Variable found: estado mutable de found.
-  Serial.printf("[I2C] scan %s:", label);                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-  for (uint8_t i = 0; i < found && i < sizeof(addresses); i++) {                      // Bucle: recorre muestras, servos o clientes.
-    Serial.printf(" 0x%02X", addresses[i]);                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-  if (found > sizeof(addresses)) Serial.print(" ...");                                // Condicion: valida estado de hardware o comando.
-  if (found == 0) Serial.print(" none");                                              // Condicion: valida estado de hardware o comando.
-  Serial.println();                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void diagnoseI2CBus() {                                                               // Funcion diagnoseI2CBus: imprime diagnostico del bus I2C y canales TCA.
-  tcaOff();                                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  scanI2CDevices("root");                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-
-  if (!i2cPing(TCA_ADDR)) {                                                           // Condicion: valida estado de hardware o comando.
-    Serial.printf("[I2C] TCA9548A missing at 0x%02X. Check SDA GPIO%d, SCL GPIO%d, VCC and common GND.\n", // Llamada: ejecuta API de hardware, red o utilidad local.
-                  TCA_ADDR, PIN_SDA, PIN_SCL);
-    return;                                                                           // Retorno: informa resultado de la operacion.
-  }
-
-  const uint8_t altMpuAddr = MPU_ADDR == 0x68 ? 0x69 : 0x68;                          // Variable altMpuAddr: constante usada en lectura de sensores IMU/I2C.
-  Serial.printf("[I2C] TCA9548A OK at 0x%02X. Firmware expects MPU at 0x%02X and AS5600 at 0x%02X.\n", // Llamada: ejecuta API de hardware, red o utilidad local.
-                TCA_ADDR, MPU_ADDR, AS5600_ADDR);
-  for (uint8_t ch = 0; ch < 8; ch++) {                                                // Bucle: recorre muestras, servos o clientes.
-    if (!tcaSel(ch)) {                                                                // Condicion: valida estado de hardware o comando.
-      Serial.printf("[I2C] TCA ch %u: select failed\n", ch);                          // Llamada: ejecuta API de hardware, red o utilidad local.
-      tcaOff();                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
+// Funcion       | scanSelectedTcaChannel: lista dispositivos encontrados en un canal I2C.
+void scanSelectedTcaChannel(byte channel) {
+  bool foundAny = false;
+  Serial.print("Escaneo I2C en TCA canal ");
+  Serial.print(channel);
+  Serial.print(": ");
+  for (byte address = 1; address < 127; address++) {
+    if (address == PCA9685_ADDR || address == TCA9548A_ADDR) {
       continue;
     }
-    delayMicroseconds(IMU_READ_SETTLE_US);                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-    bool primary = i2cPing(MPU_ADDR);                                                 // Variable primary: estado mutable de primary.
-    bool alternate = i2cPing(altMpuAddr);                                             // Variable alternate: estado mutable de alternate.
-    bool as5600 = i2cPing(AS5600_ADDR);                                               // Variable as5600: estado mutable de as5600.
-    Serial.printf("[I2C] TCA ch %u: 0x%02X %s, 0x%02X %s, AS5600 0x%02X %s",           // Llamada: ejecuta API de hardware, red o utilidad local.
-                  ch,
-                  MPU_ADDR,
-                  primary ? "OK" : "--",
-                  altMpuAddr,
-                  alternate ? "OK" : "--",
-                  AS5600_ADDR,
-                  as5600 ? "OK" : "--");
-    if (imuIndexForChannel(ch) >= 0 && !primary && alternate) {                       // Condicion: valida estado de hardware o comando.
-      Serial.print(" (AD0/address mismatch)");                                        // Llamada: ejecuta API de hardware, red o utilidad local.
+    if (deviceFound(address)) {
+      printHexAddress(address);
+      Serial.print(" ");
+      foundAny = true;
     }
-    if (as5600IndexForChannel(ch) >= 0 && !as5600) {                                  // Condicion: valida estado de hardware o comando.
-      Serial.print(" (AS5600 esperado)");                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-    Serial.println();                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    delay(2);                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
   }
-}
-
-float imuAccelAngleDeg(int idx, int16_t ax, int16_t ay, int16_t az) {                 // Funcion imuAccelAngleDeg: estima angulo desde acelerometro MPU6050.
-  const float fax = ax / 16384.0f;                                                    // Variable fax: constante usada en fax.
-  const float fay = ay / 16384.0f;                                                    // Variable fay: constante usada en fay.
-  const float faz = az / 16384.0f;                                                    // Variable faz: constante usada en faz.
-  const float angle = (idx == IMU_L_LAT || idx == IMU_R_LAT)                          // Variable angle: constante usada en control angular de servos.
-    ? atan2f(fay, faz) * 180.0f / PI + 90.0f
-    : atan2f(fax, faz) * 180.0f / PI + 90.0f;
-  return constrain(angle, 0.0f, 180.0f);                                              // Retorno: informa resultado de la operacion.
-}
-
-float clampServoDeg(int id, float deg) {                                              // Funcion clampServoDeg: limita el angulo de servo a rangos seguros.
-  float mn = max(SRV_HARD_MIN[id], servoCfg[id].minDeg);                              // Variable mn: estado mutable de mn.
-  float mx = min(SRV_HARD_MAX[id], servoCfg[id].maxDeg);                              // Variable mx: estado mutable de mx.
-  return constrain(deg, mn, mx);                                                      // Retorno: informa resultado de la operacion.
-}
-
-uint8_t servoPcaChannel(int id) {                                                     // Funcion servoPcaChannel: resuelve el canal PCA9685 de un servo.
-  return (uint8_t)constrain((int)servoCfg[id].channel, 0, 15);                        // Retorno: informa resultado de la operacion.
-}
-
-int angleToPwm(int id, float deg) {                                                   // Funcion angleToPwm: convierte grados logicos a pulso PWM.
-  deg = clampServoDeg(id, deg);                                                       // Asignacion: actualiza estado del firmware.
-  float logical = servoCfg[id].direction < 0                                          // Variable logical: estado mutable de logical.
-                    ? 270.0f - deg + servoCfg[id].offsetDeg
-                    : deg + servoCfg[id].offsetDeg;
-  logical = constrain(logical, 0.0f, 270.0f);                                         // Asignacion: actualiza estado del firmware.
-  float span = (float)(servoCfg[id].pwm270 - servoCfg[id].pwm0);                      // Variable span: estado mutable de span.
-  int pulse = servoCfg[id].pwm0 + (int)((logical / 270.0f) * span);                   // Variable pulse: estado mutable de pulse.
-  return constrain(pulse, min(servoCfg[id].pwm0, servoCfg[id].pwm270), max(servoCfg[id].pwm0, servoCfg[id].pwm270)); // Retorno: informa resultado de la operacion.
-}
-
-void writeServo(int id, float deg) {                                                  // Funcion writeServo: aplica el PWM calculado a un servo.
-  currentDeg[id] = clampServoDeg(id, deg);                                            // Asignacion: actualiza estado del firmware.
-  pca.setPWM(servoPcaChannel(id), 0, angleToPwm(id, currentDeg[id]));                 // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void writeAllServos(float deg) {                                                      // Funcion writeAllServos: mueve los 6 canales PCA9685 al mismo angulo.
-  for (int i = 0; i < N_SERVOS; i++) {
-    targetDeg[i] = clampServoDeg(i, deg);
-    writeServo(i, targetDeg[i]);
+  if (!foundAny) {
+    Serial.print("sin dispositivos");
   }
+  Serial.println();
 }
-
-void initializeServosSafely() {                                                       // Funcion initializeServosSafely: arranca sin mover ni energizar servos.
+// Funcion       | angleToPwmTicks: convierte grados de servo a ticks PWM del PCA9685.
+uint16_t angleToPwmTicks(int angle) {
+  angle = constrain(angle, MIN_ANGLE, MAX_ANGLE);
+  int pulseUs = map(angle, MIN_ANGLE, MAX_ANGLE, SERVO_MIN_US, SERVO_MAX_US);
+  return (uint16_t)((pulseUs * 4096L) / 20000L);
+}
+// Funcion       | setServoAngle: aplica un angulo limitado al canal de servo indicado.
+void setServoAngle(byte channel, int angle) {
   if (!pcaOnline) {
-    servosArmed = false;                                                              // Asignacion: evita salida PWM si el driver no esta disponible.
-    Serial.println("[SERVO] Safe startup: PCA9685 offline, PWM not enabled.");
     return;
   }
-
-  servosArmed = false;                                                                // Asignacion: el operador debe armar con comando explicito.
-  releaseServos();                                                                    // Llamada: libera los canales PCA9685 sin mover a home.
-  Serial.println("[SERVO] Safe startup: servos disarmed, PWM released, no home move or boot sweep.");
+  pca.setPWM(channel, 0, angleToPwmTicks(angle));
 }
-
-void releaseServos() {                                                                // Funcion releaseServos: libera la senal PWM de todos los servos.
-  if (!pcaOnline) return;                                                             // Condicion: evita escribir al driver si no esta presente.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    pca.setPWM(servoPcaChannel(i), 0, 4096);                                          // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-}
-
-void armServos(const char* reason) {                                                  // Funcion armServos: habilita PWM solo por orden explicita del operador.
-  if (emergency) return;                                                              // Condicion: no arma mientras el paro esta activo.
-  if (!pcaOnline) {                                                                   // Condicion: evita asumir control si el PCA no responde.
-    Serial.printf("[SERVO] Arm rejected: PCA9685 offline (%s)\n", reason);
+// Funcion       | disableServo: corta PWM en un canal del PCA9685.
+void disableServo(byte channel) {
+  if (!pcaOnline) {
     return;
   }
-  if (!servosArmed) {
-    servosArmed = true;                                                               // Asignacion: permite que updateServos escriba PWM.
-    Serial.printf("[SERVO] Armed by %s; first PWM follows current targets.\n", reason);
+  pca.setPWM(channel, 0, 4096);
+}
+// Funcion       | releaseControlledServos: libera todos los servos controlados por sensores.
+void releaseControlledServos() {
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    disableServo(CONTROLLED_SERVO_CHANNELS[i]);
+  }
+  for (byte i = 0; i < ELBOW_COUNT; i++) {
+    disableServo(BUTTON_SERVO_CHANNELS[i]);
   }
 }
-
-void disarmServos(const char* reason) {                                               // Funcion disarmServos: vuelve al estado seguro sin PWM.
-  servosArmed = false;                                                                // Asignacion: bloquea el lazo de control.
-  releaseServos();                                                                    // Llamada: libera senal PWM en todos los canales.
-  Serial.printf("[SERVO] Disarmed: %s\n", reason);
+// Funcion       | centerControlledServos: lleva servos controlados a su posicion central.
+void centerControlledServos() {
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    setServoAngle(CONTROLLED_SERVO_CHANNELS[i], SERVO_CENTER_ANGLE);
+  }
+  for (byte i = 0; i < ELBOW_COUNT; i++) {
+    setServoAngle(BUTTON_SERVO_CHANNELS[i], SERVO_CENTER_ANGLE);
+  }
 }
-
-void setEmergency(bool active, const char* reason) {                                  // Funcion setEmergency: activa o limpia el estado de paro de emergencia.
-  if (active == emergency) return;                                                    // Condicion: valida estado de hardware o comando.
-  const bool wasArmed = servosArmed;                                                  // Variable wasArmed: recuerda si habia PWM activo antes del paro.
-  emergency = active;                                                                 // Asignacion: actualiza estado del firmware.
-  if (active) {                                                                       // Condicion: valida estado de hardware o comando.
-    opMode = "emergency";                                                             // Asignacion: actualiza estado del firmware.
-    servosArmed = false;                                                              // Asignacion: bloquea nuevos movimientos durante emergencia.
-#if ESTOP_RELEASES_SERVOS                                                             // Directiva de compilacion: activa codigo segun configuracion.
-    releaseServos();                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-#else                                                                                 // Directiva de compilacion: activa codigo segun configuracion.
-    if (wasArmed) {
-      for (int i = 0; i < N_SERVOS; i++) writeServo(i, currentDeg[i]);                // Bucle: retiene la ultima posicion solo si ya habia PWM activo.
-    } else {
-      releaseServos();                                                                // Llamada: no energiza servos si el sistema ya estaba desarmado.
+// Funcion       | mapFloat: remapea valores flotantes entre rangos.
+float mapFloat(float value, float inMin, float inMax, float outMin, float outMax) {
+  return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+}
+// Funcion       | tiltToServoAngle: convierte inclinacion de IMU a angulo de servo.
+int tiltToServoAngle(float tiltDeg) {
+  tiltDeg = constrain(tiltDeg, SENSOR_MIN_DEG, SENSOR_MAX_DEG);
+  float mapped = mapFloat(tiltDeg, SENSOR_MIN_DEG, SENSOR_MAX_DEG, SHOULDER_SERVO_MIN_ANGLE, SHOULDER_SERVO_MAX_ANGLE);
+  return constrain((int)(mapped + 0.5), SHOULDER_SERVO_MIN_ANGLE, SHOULDER_SERVO_MAX_ANGLE);
+}
+// Funcion       | getTiltDeg: calcula roll o pitch segun eje configurado.
+float getTiltDeg(byte index, float x, float y, float z) {
+  float rollDeg = atan2f(y, z) * RAD_TO_DEG_F;
+  float pitchDeg = atan2f(-x, sqrtf(y * y + z * z)) * RAD_TO_DEG_F;
+  float tiltDeg = SENSOR_AXES[index] == AXIS_ROLL ? rollDeg : pitchDeg;
+  if (INVERT_SENSOR[index]) {
+    tiltDeg = -tiltDeg;
+  }
+  return tiltDeg;
+}
+// Funcion       | setupMpu: detecta e inicializa un MPU en su canal asignado.
+void setupMpu(byte index) {
+  Serial.print("Iniciando MPU6050 ");
+  Serial.print(index + 1);
+  Serial.print(" en TCA canal ");
+  Serial.print(TCA_CHANNELS[index]);
+  Serial.print("...");
+  if (!tcaSelect(TCA_CHANNELS[index])) {
+    Serial.println(" ERROR: no se pudo seleccionar el canal.");
+    return;
+  }
+  byte detectedAddress = 0;
+  byte whoAmI = 0xFF;
+  bool whoAmIRead = false;
+  for (byte i = 0; i < MPU_ADDR_OPTION_COUNT; i++) {
+    byte address = MPU_ADDR_OPTIONS[i];
+    if (deviceFound(address)) {
+      detectedAddress = address;
+      whoAmIRead = readMpuRegister(address, MPU_REG_WHO_AM_I, &whoAmI);
+      break;
     }
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-    Serial.printf("[ESTOP] ACTIVE: %s\n", reason);                                    // Llamada: ejecuta API de hardware, red o utilidad local.
+  }
+  if (detectedAddress == 0) {
+    Serial.println(" ERROR: no detectado en 0x68 ni 0x69.");
+    scanSelectedTcaChannel(TCA_CHANNELS[index]);
+    return;
+  }
+  if (!initMpuRegisters(detectedAddress)) {
+    Serial.println(" ERROR: responde, pero no acepta configuracion.");
+    scanSelectedTcaChannel(TCA_CHANNELS[index]);
+    return;
+  }
+  detectedMpuAddresses[index] = detectedAddress;
+  mpuReady[index] = true;
+  mpuFaults[index] = 0;
+  Serial.print(" OK direccion ");
+  printHexAddress(detectedAddress);
+  Serial.print(", WHO_AM_I ");
+  if (whoAmIRead) {
+    printHexAddress(whoAmI);
+    Serial.print(" (");
+    printMpuIdName(whoAmI);
+    Serial.print(")");
+    if (!isKnownMpuId(whoAmI)) {
+      Serial.print(" - se intentara leer igual");
+    }
   } else {
-    applyBootBehavior();                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-    Serial.println("[ESTOP] CLEARED");                                                // Llamada: ejecuta API de hardware, red o utilidad local.
+    Serial.print("no leido - se intentara leer igual");
+  }
+  Serial.println(".");
+}
+// Funcion       | setupButtons: inicializa botones normalmente abiertos de codo.
+void setupButtons() {
+  for (byte elbow = 0; elbow < ELBOW_COUNT; elbow++) {
+    buttonServoAngles[elbow] = BUTTON_OPEN_ANGLE;
+    filteredButtonServoAngles[elbow] = BUTTON_OPEN_ANGLE;
+  }
+  for (byte i = 0; i < BUTTON_COUNT; i++) {
+    pinMode(BUTTON_PINS[i], INPUT_PULLUP);
+    buttonReady[i] = true;
+    buttonPressed[i] = digitalRead(BUTTON_PINS[i]) == LOW;
+    buttonWasPressed[i] = false;
+    buttonLastStepMs[i] = millis();
+    Serial.print("Boton N.A. ");
+    Serial.print(i + 1);
+    Serial.print(" en GPIO");
+    Serial.print(BUTTON_PINS[i]);
+    Serial.print(BUTTON_DIRECTIONS[i] > 0 ? " (+)" : " (-)");
+    Serial.print(" para servo canal ");
+    Serial.print(BUTTON_SERVO_CHANNELS[BUTTON_ELBOW_INDEX[i]]);
+    Serial.print(": ");
+    Serial.println(buttonPressed[i] ? "presionado" : "abierto");
   }
 }
-
-bool imuPacketLooksValid(int16_t ax, int16_t ay, int16_t az, int16_t gx, int16_t gy, int16_t gz) { // Funcion imuPacketLooksValid: encapsula la logica de lectura de sensores IMU/I2C.
-  if (ax == 0 && ay == 0 && az == 0 && gx == 0 && gy == 0 && gz == 0) return false;   // Condicion: valida estado de hardware o comando.
-  const float accelG2 =                                                               // Variable accelG2: constante usada en accel g2.
-    (float)ax * (float)ax / (16384.0f * 16384.0f) +
-    (float)ay * (float)ay / (16384.0f * 16384.0f) +
-    (float)az * (float)az / (16384.0f * 16384.0f);
-  return accelG2 > 0.04f && accelG2 < 5.0f;                                           // Retorno: informa resultado de la operacion.
-}
-
-bool readImuMotion(int idx, int16_t& ax, int16_t& ay, int16_t& az, int16_t& gx, int16_t& gy, int16_t& gz) { // Funcion readImuMotion: lee una muestra cruda valida desde una IMU.
-  if (!tcaSel(IMU_TCA_CHANNEL[idx])) {                                                // Condicion: valida estado de hardware o comando.
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    return false;                                                                     // Retorno: informa resultado de la operacion.
+// Funcion       | setupMpus: inicializa todos los sensores MPU configurados.
+void setupMpus() {
+  if (!deviceFound(TCA9548A_ADDR)) {
+    Serial.println("ERROR: No se detecta el TCA9548A en direccion 0x70.");
+    Serial.println("Para usar 4 MPU6050 en el mismo bus I2C necesitas multiplexor o conmutar direcciones.");
+    return;
   }
-  delayMicroseconds(IMU_READ_SETTLE_US);                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-  imu[idx].getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-  tcaOff();                                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-
-  if (!imuPacketLooksValid(ax, ay, az, gx, gy, gz)) return false;                     // Condicion: valida estado de hardware o comando.
-  if (!imuOnline[idx]) Serial.printf("[IMU] bus %d recovered\n", idx);                // Condicion: valida estado de hardware o comando.
-  imuOnline[idx] = true;                                                              // Asignacion: actualiza estado del firmware.
-  imuFaults[idx] = 0;                                                                 // Asignacion: actualiza estado del firmware.
-  return true;                                                                        // Retorno: informa resultado de la operacion.
-}
-
-float readImuRawDeg(int idx) {                                                        // Funcion readImuRawDeg: lee imu raw deg.
-  int16_t ax, ay, az, gx, gy, gz;
-  if (!readImuMotion(idx, ax, ay, az, gx, gy, gz)) {                                  // Condicion: valida estado de hardware o comando.
-    if (imuFaults[idx] < 255) imuFaults[idx]++;                                       // Condicion: valida estado de hardware o comando.
-    if (imuOnline[idx] && imuFaults[idx] >= IMU_FAIL_LIMIT) {                         // Condicion: valida estado de hardware o comando.
-      imuOnline[idx] = false;                                                         // Asignacion: actualiza estado del firmware.
-      Serial.printf("[IMU] bus %d lost signal\n", idx);                               // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-    return cf[idx].ready ? constrain(cf[idx].angle, 0.0f, 180.0f) : 0.0f;             // Retorno: informa resultado de la operacion.
-  }
-
-  // Keep the accelerometer gravity vector intact; neutral angle is handled by
-  // imuCfg.neutralDeg, while calibration removes only gyro drift.
-
-  float gyroRate;                                                                     // Declaracion gyroRate: dato de gyro rate.
-  if (idx == IMU_L_LAT || idx == IMU_R_LAT) {                                         // Condicion: valida estado de hardware o comando.
-    gyroRate = (gy - imuOff[idx].gy) / 131.0f;                                        // Asignacion: actualiza estado del firmware.
-  } else {
-    gyroRate = (gx - imuOff[idx].gx) / 131.0f;                                        // Asignacion: actualiza estado del firmware.
-  }
-  gyroRate = constrain(gyroRate, -IMU_GYRO_RATE_LIMIT_DPS, IMU_GYRO_RATE_LIMIT_DPS);  // Asignacion: actualiza estado del firmware.
-
-  float accelAngle = imuAccelAngleDeg(idx, ax, ay, az);                               // Variable accelAngle: estado mutable de control angular de servos.
-
-  unsigned long nowUs = micros();                                                     // Variable nowUs: estado mutable de now us.
-  CompFilter& f = cf[idx];
-  if (!f.ready) {                                                                     // Condicion: valida estado de hardware o comando.
-    f.angle = accelAngle;                                                             // Asignacion: actualiza estado del firmware.
-    f.lastUs = nowUs;                                                                 // Asignacion: actualiza estado del firmware.
-    f.ready = true;                                                                   // Asignacion: actualiza estado del firmware.
-    return accelAngle;                                                                // Retorno: informa resultado de la operacion.
-  }
-
-  float dt = (nowUs - f.lastUs) * 1.0e-6f;                                            // Variable dt: estado mutable de dt.
-  dt = constrain(dt, 0.001f, IMU_DT_MAX_SEC);                                         // Asignacion: actualiza estado del firmware.
-  f.lastUs = nowUs;                                                                   // Asignacion: actualiza estado del firmware.
-  if (fabsf(accelAngle - f.angle) > IMU_ACCEL_JUMP_LIMIT_DEG) accelAngle = f.angle;   // Condicion: valida estado de hardware o comando.
-  float predicted = constrain(f.angle + gyroRate * dt, 0.0f, 180.0f);                 // Variable predicted: estado mutable de predicted.
-  f.angle = COMP_ALPHA * predicted + (1.0f - COMP_ALPHA) * accelAngle;                // Asignacion: actualiza estado del firmware.
-  return constrain(f.angle, 0.0f, 180.0f);                                            // Retorno: informa resultado de la operacion.
-}
-
-float readImuDeg(int idx) {                                                           // Funcion readImuDeg: filtra y entrega el angulo operativo de una IMU.
-  float raw = readImuRawDeg(idx);                                                     // Variable raw: estado mutable de raw.
-  float deg = (raw - imuCfg[idx].neutralDeg) * (imuCfg[idx].invert ? -1.0f : 1.0f);   // Variable deg: estado mutable de control angular de servos.
-  float lo = min(imuCfg[idx].minDeg, imuCfg[idx].maxDeg);                             // Variable lo: estado mutable de lo.
-  float hi = max(imuCfg[idx].minDeg, imuCfg[idx].maxDeg);                             // Variable hi: estado mutable de hi.
-#if IMU_USE_ABSOLUTE_DELTA                                                            // Directiva de compilacion: activa codigo segun configuracion.
-  deg = fabsf(deg);                                                                   // Asignacion: actualiza estado del firmware.
-  lo = 0.0f;                                                                          // Asignacion: actualiza estado del firmware.
-  hi = max(fabsf(imuCfg[idx].minDeg), fabsf(imuCfg[idx].maxDeg));                     // Asignacion: actualiza estado del firmware.
-  if (hi < 1.0f) hi = IMU_DEFAULT_MAX_DEG[idx];                                       // Condicion: valida estado de hardware o comando.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-  deg = constrain(deg, lo, hi);                                                       // Asignacion: actualiza estado del firmware.
-
-  CompFilter& f = cf[idx];
-  if (!f.degReady) {                                                                  // Condicion: valida estado de hardware o comando.
-    f.deg = deg;                                                                      // Asignacion: actualiza estado del firmware.
-    f.degReady = true;                                                                // Asignacion: actualiza estado del firmware.
-    return deg;                                                                       // Retorno: informa resultado de la operacion.
-  }
-
-  const float alpha = constrain(IMU_OUTPUT_EMA_ALPHA, 0.05f, 1.0f);                   // Variable alpha: constante usada en alpha.
-  f.deg += (deg - f.deg) * alpha;
-  return constrain(f.deg, lo, hi);                                                    // Retorno: informa resultado de la operacion.
-}
-
-const uint8_t AS5600_REG_RAW_ANGLE = 0x0C;                                            // Variable AS5600_REG_RAW_ANGLE: registro raw angle del AS5600.
-
-float as5600WrapCounts(float value) {                                                 // Funcion as5600WrapCounts: normaliza cuentas raw 0..4095.
-  while (value < 0.0f) value += AS5600_COUNTS_PER_REV;
-  while (value >= AS5600_COUNTS_PER_REV) value -= AS5600_COUNTS_PER_REV;
-  return value;                                                                       // Retorno: informa resultado de la operacion.
-}
-
-float as5600SignedDelta(float from, float to) {                                       // Funcion as5600SignedDelta: delta corto con envoltura circular.
-  float delta = as5600WrapCounts(to) - as5600WrapCounts(from);                        // Variable delta: estado mutable de delta.
-  if (delta > AS5600_COUNTS_PER_REV / 2.0f) delta -= AS5600_COUNTS_PER_REV;           // Condicion: valida estado de hardware o comando.
-  if (delta < -AS5600_COUNTS_PER_REV / 2.0f) delta += AS5600_COUNTS_PER_REV;          // Condicion: valida estado de hardware o comando.
-  return delta;                                                                       // Retorno: informa resultado de la operacion.
-}
-
-bool readAs5600Raw(int idx, int& raw) {                                               // Funcion readAs5600Raw: lee RAW_ANGLE del AS5600 por TCA/I2C.
-  if (idx < 0 || idx >= NUM_AS5600) return false;                                     // Condicion: valida estado de hardware o comando.
-  if (!tcaSel(AS5600_TCA_CHANNEL[idx])) {                                             // Condicion: valida estado de hardware o comando.
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    return false;                                                                     // Retorno: informa resultado de la operacion.
-  }
-  delayMicroseconds(IMU_READ_SETTLE_US);                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.beginTransmission(AS5600_ADDR);                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.write(AS5600_REG_RAW_ANGLE);                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-  if (Wire.endTransmission(false) != 0) {                                             // Condicion: valida estado de hardware o comando.
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    return false;                                                                     // Retorno: informa resultado de la operacion.
-  }
-  if (Wire.requestFrom((uint8_t)AS5600_ADDR, (uint8_t)2) != 2) {                      // Condicion: valida estado de hardware o comando.
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    return false;                                                                     // Retorno: informa resultado de la operacion.
-  }
-  uint8_t hi = Wire.read();                                                           // Variable hi: estado mutable de hi.
-  uint8_t lo = Wire.read();                                                           // Variable lo: estado mutable de lo.
-  tcaOff();                                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  raw = (((int)hi & 0x0F) << 8) | lo;                                                 // Asignacion: actualiza estado del firmware.
-  return raw >= 0 && raw < (int)AS5600_COUNTS_PER_REV;                                // Retorno: informa resultado de la operacion.
-}
-
-bool as5600UsesFactoryDefaults(int idx) {                                             // Funcion as5600UsesFactoryDefaults: detecta calibracion AS5600 sin capturar.
-  return as5600Cfg[idx].raw0 == AS5600_RAW_0DEG_DEFAULT &&                            // Retorno: informa resultado de la operacion.
-         as5600Cfg[idx].raw90 == AS5600_RAW_90DEG_DEFAULT &&                          // Asignacion: actualiza estado del firmware.
-         fabsf(as5600Cfg[idx].neutralDeg) < 0.01f &&                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-         !as5600Cfg[idx].invert;
-}
-
-void resetAs5600Tracking(int idx) {                                                   // Funcion resetAs5600Tracking: reinicia tracking AS5600.
-  if (idx < 0 || idx >= NUM_AS5600) return;                                           // Condicion: valida estado de hardware o comando.
-  as5600BaseReady[idx] = false;                                                       // Asignacion: actualiza estado del firmware.
-  as5600EmaReady[idx] = false;                                                        // Asignacion: actualiza estado del firmware.
-  as5600Online[idx] = false;                                                          // Asignacion: actualiza estado del firmware.
-  as5600Faults[idx] = 0;                                                              // Asignacion: actualiza estado del firmware.
-  int servoId = idx == AS5600_L_ELB ? SRV_L_ELB : SRV_R_ELB;                          // Variable servoId: estado mutable de control angular de servos.
-  sensorDeg[servoId] = 0.0f;                                                          // Asignacion: actualiza estado del firmware.
-  sensorOnline[servoId] = false;                                                      // Asignacion: actualiza estado del firmware.
-}
-
-float readAs5600Deg(int idx) {                                                        // Funcion readAs5600Deg: convierte raw AS5600 a grados de codo.
-  int raw = 0;                                                                        // Variable raw: estado mutable de raw.
-  int servoId = idx == AS5600_L_ELB ? SRV_L_ELB : SRV_R_ELB;                          // Variable servoId: estado mutable de control angular de servos.
-  if (!readAs5600Raw(idx, raw)) {                                                     // Condicion: valida estado de hardware o comando.
-    if (as5600Faults[idx] < 255) as5600Faults[idx]++;                                 // Condicion: valida estado de hardware o comando.
-    if (as5600Online[idx] && as5600Faults[idx] >= AS5600_FAIL_LIMIT) {                // Condicion: valida estado de hardware o comando.
-      as5600Online[idx] = false;                                                      // Asignacion: actualiza estado del firmware.
-      Serial.printf("[AS5600] sensor %d lost signal on TCA ch %d\n", idx, AS5600_TCA_CHANNEL[idx]); // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-    return sensorDeg[servoId];                                                        // Retorno: informa resultado de la operacion.
-  }
-
-  if (!as5600Online[idx]) Serial.printf("[AS5600] sensor %d recovered\n", idx);       // Condicion: valida estado de hardware o comando.
-  as5600Online[idx] = true;                                                           // Asignacion: actualiza estado del firmware.
-  as5600Faults[idx] = 0;                                                              // Asignacion: actualiza estado del firmware.
-  as5600Raw[idx] = raw;                                                               // Asignacion: actualiza estado del firmware.
-
-  if (!as5600EmaReady[idx]) {                                                         // Condicion: valida estado de hardware o comando.
-    as5600Ema[idx] = (float)raw;                                                      // Asignacion: actualiza estado del firmware.
-    as5600EmaReady[idx] = true;                                                       // Asignacion: actualiza estado del firmware.
-  } else {
-    float delta = as5600SignedDelta(as5600Ema[idx], (float)raw);                      // Variable delta: estado mutable de delta.
-    as5600Ema[idx] = as5600WrapCounts(as5600Ema[idx] + delta * AS5600_EMA_ALPHA);     // Asignacion: actualiza estado del firmware.
-  }
-
-  if (!as5600BaseReady[idx]) {                                                        // Condicion: valida estado de hardware o comando.
-    as5600BaseRaw[idx] = as5600Ema[idx];                                              // Asignacion: actualiza estado del firmware.
-    as5600BaseReady[idx] = true;                                                      // Asignacion: actualiza estado del firmware.
-  }
-
-  float bootDelta = max(0.0f, fabsf(as5600SignedDelta(as5600BaseRaw[idx], as5600Ema[idx])) - AS5600_RAW_DEADBAND); // Variable bootDelta: estado mutable de boot delta.
-  float autoDeg = constrain((bootDelta / AS5600_COUNTS_90_DEG) * 90.0f, 0.0f, 90.0f); // Variable autoDeg: estado mutable de control angular de servos.
-
-  if (as5600UsesFactoryDefaults(idx)) return autoDeg;                                 // Condicion: valida estado de hardware o comando.
-
-  float span = as5600SignedDelta((float)as5600Cfg[idx].raw0, (float)as5600Cfg[idx].raw90); // Variable span: estado mutable de span.
-  if (fabsf(span) < 1.0f) return autoDeg;                                             // Condicion: valida estado de hardware o comando.
-  float ratio = as5600SignedDelta((float)as5600Cfg[idx].raw0, as5600Ema[idx]) / span; // Variable ratio: estado mutable de ratio.
-  float deg = constrain(ratio * 90.0f, 0.0f, 90.0f);                                  // Variable deg: estado mutable de control angular de servos.
-  float delta = (deg - as5600Cfg[idx].neutralDeg) * (as5600Cfg[idx].invert ? -1.0f : 1.0f); // Variable delta: estado mutable de delta.
-  return constrain(max(fabsf(delta), autoDeg), 0.0f, 90.0f);                          // Retorno: informa resultado de la operacion.
-}
-
-bool as5600IsOnline(int idx) {                                                        // Funcion as5600IsOnline: informa estado de sensores AS5600.
-  if (idx < 0 || idx >= NUM_AS5600) return false;                                     // Condicion: valida estado de hardware o comando.
-  if (!as5600EmaReady[idx]) return false;                                             // Condicion: valida estado de hardware o comando.
-  return as5600Online[idx];                                                           // Retorno: informa resultado de la operacion.
-}
-
-float readLinkedSensorDeg(const SensorLink& link) {                                   // Funcion readLinkedSensorDeg: lee linked sensor deg.
-  if (link.sensorKind == SENSOR_KIND_IMU) return readImuDeg(link.sensorId);           // Condicion: valida estado de hardware o comando.
-  return readAs5600Deg(link.sensorId);                                                // Retorno: informa resultado de la operacion.
-}
-
-const char* sensorSourceName(const SensorLink& link) {                              // Funcion sensorSourceName: devuelve nombre legible del sensor enlazado a un servo.
-  if (link.sensorKind == SENSOR_KIND_AS5600) {                                        // Condicion: valida estado de hardware o comando.
-    return link.sensorId == AS5600_L_ELB ? "AS5600 izquierdo TCA4" : "AS5600 derecho TCA5"; // Retorno: informa resultado de la operacion.
-  }
-  switch (link.sensorId) {                                                            // Selector: despacha por tipo de evento o comando.
-    case IMU_L_LAT: return "MPU TCA0 hombro izquierdo lateral";                       // Caso: evento o comando especifico.
-    case IMU_L_FRO: return "MPU TCA1 hombro izquierdo frontal";                       // Caso: evento o comando especifico.
-    case IMU_R_LAT: return "MPU TCA2 hombro derecho lateral";                         // Caso: evento o comando especifico.
-    case IMU_R_FRO: return "MPU TCA3 hombro derecho frontal";                         // Caso: evento o comando especifico.
-    default: return "MPU";                                                            // Campo default: dato miembro de estructura o JSON.
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    setupMpu(i);
   }
 }
-
-const SensorLink& linkForServo(int servoId) {                                        // Funcion linkForServo: retorna el SensorLink correspondiente al ID de servo.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    if (SENSOR_LINKS[i].servoId == servoId) return SENSOR_LINKS[i];                   // Condicion: valida estado de hardware o comando.
+// Funcion       | readMpuAccel: obtiene aceleracion normalizada de un MPU listo.
+bool readMpuAccel(byte index, float *x, float *y, float *z) {
+  if (!tcaSelect(TCA_CHANNELS[index])) {
+    return false;
   }
-  return SENSOR_LINKS[0];                                                             // Retorno: informa resultado de la operacion.
+  byte buffer[6];
+  if (!readMpuBytes(detectedMpuAddresses[index], MPU_REG_ACCEL_XOUT_H, buffer, 6)) {
+    return false;
+  }
+  int16_t rawX = (int16_t)((buffer[0] << 8) | buffer[1]);
+  int16_t rawY = (int16_t)((buffer[2] << 8) | buffer[3]);
+  int16_t rawZ = (int16_t)((buffer[4] << 8) | buffer[5]);
+  *x = (float)rawX;
+  *y = (float)rawY;
+  *z = (float)rawZ;
+  return true;
 }
 
-// Log Serial humano de los AS5600. Util cuando NO hay cliente WS conectado:
-// la UI ya muestra raw/sensor por websocket, pero si el usuario solo tiene
-// el monitor serial abierto puede ver desde aqui que el raw I2C esta leyendo.
-// Pasa solo cuando no hay WS para no romper
-// el parser JSON del PC.
-void printAs5600Diag() {                                                              // Funcion printAs5600Diag: encapsula la logica de sensores AS5600.
-  Serial.printf(                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-    "[AS5600] L raw=%d ema=%.0f base=%.0f deg=%.1f tgt=%.1f cur=%.1f on=%d | "
-    "R raw=%d ema=%.0f base=%.0f deg=%.1f tgt=%.1f cur=%.1f on=%d | mode=%s\n",
-    as5600Raw[0], as5600Ema[0], as5600BaseRaw[0],
-    sensorDeg[SRV_L_ELB], targetDeg[SRV_L_ELB], currentDeg[SRV_L_ELB],
-    as5600Online[0] ? 1 : 0,
-    as5600Raw[1], as5600Ema[1], as5600BaseRaw[1],
-    sensorDeg[SRV_R_ELB], targetDeg[SRV_R_ELB], currentDeg[SRV_R_ELB],
-    as5600Online[1] ? 1 : 0,
-    opMode.c_str()                                                                    // Llamada: ejecuta API de hardware, red o utilidad local.
-  );
-}
-
-void readAllSensors() {                                                               // Funcion readAllSensors: actualiza lecturas de sensores enlazados.
-  if (!sensorsEnabled()) return;                                                       // Condicion: en prueba manual no tocar IMU/AS5600.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    const SensorLink& link = SENSOR_LINKS[i];
-    const int servoId = link.servoId;                                                 // Variable servoId: constante usada en control angular de servos.
-    // Leer primero (esto actualiza imuOnline/as5600Online/imuFaults) y
-    // luego decidir si el valor es confiable. Si no lo es, NO tocamos
-    // sensorDeg: conservamos la ultima lectura buena para que el servo
-    // mantenga posicion en vez de saltar.
-    float reading = readLinkedSensorDeg(link);                                        // Variable reading: estado mutable de reading.
-    bool online = (link.sensorKind == SENSOR_KIND_IMU)                                // Variable online: estado mutable de online.
-                    ? imuOnline[link.sensorId]
-                    : as5600IsOnline(link.sensorId);
-    // El servo debe seguir al sensor "sea como sea": cuando la lectura falla,
-    // readImuDeg/readAs5600Deg ya devuelven el ultimo valor bueno retenido, asi
-    // que asignar siempre es seguro y evita que un parpadeo del heuristico de
-    // "online" congele el target y el servo deje de moverse.
-    sensorDeg[servoId] = reading;                                                     // Asignacion: el servo sigue la ultima lectura (retenida si fallo).
-    sensorOnline[servoId] = online;                                                   // Asignacion: solo informativo para la telemetria/UI.
-  }
-}
-
-void updateTargetsFromSensors() {                                                     // Funcion updateTargetsFromSensors: calcula objetivos de servo desde sensores.
-  if (!sensorsEnabled()) return;                                                       // Condicion: conserva targets enviados por la pagina manual.
-  const bool sensorDrivenMode = opMode == "assisted" || opMode == "automatic";        // Variable sensorDrivenMode: constante usada en sensor driven mode.
-#if !AS5600_ELBOW_ALWAYS_ON                                                           // Directiva de compilacion: activa codigo segun configuracion.
-  if (!sensorDrivenMode) return;                                                      // Condicion: valida estado de hardware o comando.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-  const float modeGain = opMode == "assisted" ? (1.0f + assistLevel) : 1.0f;          // Variable modeGain: constante usada en control angular de servos.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    const SensorLink& link = SENSOR_LINKS[i];
-    const int servoId = link.servoId;                                                 // Variable servoId: constante usada en control angular de servos.
-    const bool as5600Elbow = link.sensorKind == SENSOR_KIND_AS5600 &&                 // Variable as5600Elbow: constante usada en sensores AS5600.
-                             (servoId == SRV_L_ELB || servoId == SRV_R_ELB);
-
-#if AS5600_ELBOW_ALWAYS_ON                                                            // Directiva de compilacion: activa codigo segun configuracion.
-    if (!sensorDrivenMode && !as5600Elbow) continue;                                  // Condicion: valida estado de hardware o comando.
-#else                                                                                 // Directiva de compilacion: activa codigo segun configuracion.
-    (void)as5600Elbow;
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-    // NO bloqueamos por el heuristico "online": sensorDeg ya conserva la
-    // ultima lectura buena cuando el sensor falla, asi que el servo sigue al
-    // usuario en vez de quedarse congelado si la deteccion de online parpadea.
-    // (Antes: if (!sensorOnline[servoId]) continue; -> los servos no se movian.)
-
-    float value = sensorDeg[servoId];                                                 // Variable value: estado mutable de value.
-    if (fabsf(value) < deadbandDeg) value = 0;                                        // Condicion: valida estado de hardware o comando.
-    float gain = sensorDrivenMode ? modeGain : 1.0f;                                  // Variable gain: estado mutable de gain.
-    targetDeg[servoId] = clampServoDeg(servoId, servoCfg[servoId].homeDeg + value * gain); // Asignacion: actualiza estado del firmware.
-  }
-}
-
-void syncServoStateToCurrentSensors() {                                               // Funcion syncServoStateToCurrentSensors: evita que cmd_arm salte a home.
-  if (!sensorsEnabled()) return;                                                       // Condicion: en prueba manual sin sensores conserva targets manuales.
-  readAllSensors();                                                                    // Llamada: toma una lectura fresca antes de habilitar PWM.
-  const bool sensorDrivenMode = opMode == "assisted" || opMode == "automatic";        // Variable sensorDrivenMode: constante usada en control angular de servos.
-  const float modeGain = opMode == "assisted" ? (1.0f + assistLevel) : 1.0f;          // Variable modeGain: ganancia que se aplicara al iniciar movimiento.
-  const float gain = sensorDrivenMode ? modeGain : 1.0f;                              // Variable gain: en manual usa postura actual sin asistencia extra.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: sincroniza todos los canales a la postura medida.
-    const SensorLink& link = SENSOR_LINKS[i];
-    const int servoId = link.servoId;
-    const float value = fabsf(sensorDeg[servoId]) < deadbandDeg ? 0.0f : sensorDeg[servoId];
-    const float target = clampServoDeg(servoId, servoCfg[servoId].homeDeg + value * gain);
-    targetDeg[servoId] = target;                                                       // Asignacion: primer PWM ira a la postura actual estimada.
-    currentDeg[servoId] = target;                                                      // Asignacion: evita que la rampa parta desde home al armar.
-  }
-}
-
-void moveServoTowardTarget(int id) {                                                  // Funcion moveServoTowardTarget: encapsula la logica de control angular de servos.
-  if (CONTROL_DIRECT_SERVO_FOLLOW) {                                                  // Condicion: sin rampa artificial; el PWM persigue el sensor/target real.
-    writeServo(id, targetDeg[id]);                                                    // Llamada: envia el objetivo inmediatamente al servo.
-    return;                                                                           // Retorno: evita limitar la velocidad por software.
-  }
-
-  float maxStep = maxSpeedDegSec * (CTRL_MS / 1000.0f);                               // Variable maxStep: estado mutable de max step.
-  maxStep = constrain(maxStep, 0.05f, CONTROL_MAX_STEP_DEG);                          // Asignacion: evita saltos visibles aun si el loop se retrasa.
-  float err = targetDeg[id] - currentDeg[id];                                         // Variable err: estado mutable de err.
-  if (fabsf(err) < CONTROL_TARGET_EPSILON_DEG) return;                                // Condicion: evita vibrar cuando ya llego al target.
-
-  // Suavizado como filtro pasa-bajos sobre el error (asintotico al target,
-  // sin overshoot). Luego clampeamos por velocidad maxima para que el limite
-  // configurado en maxSpeedDegSec sea efectivo. Antes el orden inverso hacia
-  // que maxSpeedDegSec quedara multiplicado por smoothing (~0.25), dando una
-  // velocidad real de ~22 deg/s y el exoesqueleto iba muy atrasado del usuario.
-  float desired = err;                                                                // Variable desired: estado mutable de desired.
-  if (smoothing > 0.01f) {                                                            // Condicion: valida estado de hardware o comando.
-    desired = err * constrain(smoothing, 0.05f, 1.0f);                                // Asignacion: actualiza estado del firmware.
-  }
-  float step = constrain(desired, -maxStep, maxStep);                                 // Variable step: estado mutable de step.
-  if (fabsf(step) > fabsf(err)) step = err;                                           // Condicion: evita pasar de largo al llegar al objetivo.
-  writeServo(id, currentDeg[id] + step);                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void updateServos() {                                                                 // Funcion updateServos: mueve los servos hacia sus objetivos.
-  if (emergency) return;                                                              // Condicion: valida estado de hardware o comando.
-  if (!servosArmed) return;                                                           // Condicion: arranque seguro, no escribe PWM hasta armado explicito.
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    moveServoTowardTarget(i);                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-}
-
-void calibrateIMUs() {                                                                // Funcion calibrateIMUs: captura offsets de IMU en posicion neutral.
-  const int N = 300;                                                                  // Variable N: constante usada en n.
-  Serial.println("[CAL] IMU calibration: keep arms neutral and still.");              // Llamada: ejecuta API de hardware, red o utilidad local.
-  for (int i = 0; i < NUM_IMUS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    long sgx = 0, sgy = 0, sgz = 0;                                                   // Variable sgx: estado mutable de sgx.
-    double sAngle = 0.0;                                                              // Variable sAngle: estado mutable de control angular de servos.
-    int good = 0;                                                                     // Variable good: estado mutable de good.
-    for (int attempts = 0; good < N && attempts < N * 3; attempts++) {                // Bucle: recorre muestras, servos o clientes.
-      int16_t ax, ay, az, gx, gy, gz;
-      if (!readImuMotion(i, ax, ay, az, gx, gy, gz)) {                                // Condicion: valida estado de hardware o comando.
-        delay(5);                                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-        continue;
-      }
-      sgx += gx; sgy += gy; sgz += gz;
-      sAngle += imuAccelAngleDeg(i, ax, ay, az);
-      good++;
-      delay(5);                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-
-    if (good < N / 2) {                                                               // Condicion: valida estado de hardware o comando.
-      imuOnline[i] = false;                                                           // Asignacion: actualiza estado del firmware.
-      cf[i].ready = false;                                                            // Asignacion: actualiza estado del firmware.
-      Serial.printf("[CAL] IMU bus %d skipped: signal too unstable\n", i);            // Llamada: ejecuta API de hardware, red o utilidad local.
+// Funcion       | calibrateMpuZeros: captura la postura neutral de cada MPU sin mover servos.
+void calibrateMpuZeros() {
+  Serial.println("Calibrando neutral MPU: manten los brazos quietos...");
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    if (!mpuReady[i]) {
+      mpuZeroTiltDeg[i] = 0;
       continue;
     }
-
-    imuOff[i].ax = 0;                                                                 // Asignacion: actualiza estado del firmware.
-    imuOff[i].ay = 0;                                                                 // Asignacion: actualiza estado del firmware.
-    imuOff[i].az = 0;                                                                 // Asignacion: actualiza estado del firmware.
-    imuOff[i].gx = sgx / good;                                                        // Asignacion: actualiza estado del firmware.
-    imuOff[i].gy = sgy / good;                                                        // Asignacion: actualiza estado del firmware.
-    imuOff[i].gz = sgz / good;                                                        // Asignacion: actualiza estado del firmware.
-    imuCfg[i].neutralDeg = constrain((float)(sAngle / good), 0.0f, 180.0f);           // Asignacion: actualiza estado del firmware.
-    cf[i].angle = imuCfg[i].neutralDeg;                                               // Asignacion: actualiza estado del firmware.
-    cf[i].deg = 0.0f;                                                                 // Asignacion: actualiza estado del firmware.
-    cf[i].ready = false;                                                              // Asignacion: actualiza estado del firmware.
-    cf[i].degReady = true;                                                            // Asignacion: actualiza estado del firmware.
-    for (int j = 0; j < N_SERVOS; j++) {                                              // Bucle: recorre muestras, servos o clientes.
-      const SensorLink& link = SENSOR_LINKS[j];
-      if (link.sensorKind == SENSOR_KIND_IMU && link.sensorId == i) sensorDeg[link.servoId] = 0.0f; // Condicion: valida estado de hardware o comando.
-    }
-    Serial.printf("[CAL] IMU bus %d neutral %.1f deg, gyro offset %d/%d/%d\n",        // Llamada: ejecuta API de hardware, red o utilidad local.
-                  i, imuCfg[i].neutralDeg, imuOff[i].gx, imuOff[i].gy, imuOff[i].gz);
-  }
-  savePrefs();                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  Serial.println("[CAL] IMU calibration done.");                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void sendSerialJson(JsonDocument& doc) {                                              // Funcion sendSerialJson: envia serial json.
-  serializeJson(doc, Serial);                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-  Serial.println();                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void sendI2CDiagnostic(uint8_t client) {                                              // Funcion sendI2CDiagnostic: envia i2 cdiagnostic.
-  JsonDocument doc;                                                                   // Declaracion doc: dato de doc.
-  doc["type"] = "i2c_diag";                                                           // Asignacion: actualiza estado del firmware.
-  doc["t"] = millis();                                                                // Asignacion: actualiza estado del firmware.
-  doc["sda"] = PIN_SDA;                                                               // Asignacion: actualiza estado del firmware.
-  doc["scl"] = PIN_SCL;                                                               // Asignacion: actualiza estado del firmware.
-  doc["clock"] = I2C_CLOCK_HZ;                                                        // Asignacion: actualiza estado del firmware.
-  doc["tcaAddr"] = TCA_ADDR;                                                          // Asignacion: actualiza estado del firmware.
-  doc["mpuAddr"] = MPU_ADDR;                                                          // Asignacion: actualiza estado del firmware.
-
-  tcaOff();                                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  uint8_t rootAddresses[16] = {0};                                                    // Arreglo rootAddresses: arreglo de datos para root addresses.
-  uint8_t rootCount = scanI2CAddresses(rootAddresses, sizeof(rootAddresses));         // Variable rootCount: estado mutable de root count.
-  JsonArray root = doc["root"].to<JsonArray>();
-  for (uint8_t i = 0; i < rootCount && i < sizeof(rootAddresses); i++) root.add(rootAddresses[i]); // Bucle: recorre muestras, servos o clientes.
-
-  bool tcaPresent = i2cPing(TCA_ADDR);                                                // Variable tcaPresent: estado mutable de lectura de sensores IMU/I2C.
-  doc["tcaPresent"] = tcaPresent;                                                     // Asignacion: actualiza estado del firmware.
-
-  JsonArray channels = doc["channels"].to<JsonArray>();
-  const uint8_t altMpuAddr = MPU_ADDR == 0x68 ? 0x69 : 0x68;                          // Variable altMpuAddr: constante usada en lectura de sensores IMU/I2C.
-  uint8_t okCount = 0;                                                                // Variable okCount: estado mutable de ok count.
-  uint8_t as5600OkCount = 0;                                                          // Variable as5600OkCount: AS5600 detectados en sus canales esperados.
-  uint8_t mismatchCount = 0;                                                          // Variable mismatchCount: estado mutable de mismatch count.
-  uint8_t missingCount = 0;                                                           // Variable missingCount: estado mutable de missing count.
-  uint8_t missingAs5600Count = 0;                                                     // Variable missingAs5600Count: AS5600 esperados pero no detectados.
-
-  if (tcaPresent) {                                                                   // Condicion: valida estado de hardware o comando.
-    for (uint8_t ch = 0; ch < 8; ch++) {                                              // Bucle: recorre muestras, servos o clientes.
-      JsonObject item = channels.add<JsonObject>();                                   // Variable item: estado mutable de item.
-      int imuIdx = imuIndexForChannel(ch);                                            // Variable imuIdx: estado mutable de lectura de sensores IMU/I2C.
-      int as5600Idx = as5600IndexForChannel(ch);                                      // Variable as5600Idx: sensor magnetico esperado en este canal.
-      bool used = imuIdx >= 0 || as5600Idx >= 0;                                      // Variable used: estado mutable de used.
-      item["ch"] = ch;                                                                // Asignacion: actualiza estado del firmware.
-      item["used"] = used;                                                            // Asignacion: actualiza estado del firmware.
-      if (imuIdx >= 0) item["imuIdx"] = imuIdx;                                       // Condicion: valida estado de hardware o comando.
-      if (as5600Idx >= 0) item["as5600Idx"] = as5600Idx;                              // Condicion: valida estado de hardware o comando.
-      item["expectedAddr"] = imuIdx >= 0 ? MPU_ADDR : as5600Idx >= 0 ? AS5600_ADDR : 0; // Asignacion: actualiza estado del firmware.
-
-      bool selected = tcaSel(ch);                                                     // Variable selected: estado mutable de selected.
-      item["selected"] = selected;                                                    // Asignacion: actualiza estado del firmware.
-      if (!selected) {                                                                // Condicion: valida estado de hardware o comando.
-        item["status"] = used ? "select_fail" : "unused";                             // Asignacion: actualiza estado del firmware.
-        if (used) missingCount++;                                                     // Condicion: valida estado de hardware o comando.
-        if (as5600Idx >= 0) missingAs5600Count++;                                     // Condicion: valida estado de hardware o comando.
-        tcaOff();                                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-        continue;
+    float sum = 0;
+    byte good = 0;
+    for (byte sample = 0; sample < 60; sample++) {
+      float accelX = 0;
+      float accelY = 0;
+      float accelZ = 0;
+      if (readMpuAccel(i, &accelX, &accelY, &accelZ)) {
+        sum += getTiltDeg(i, accelX, accelY, accelZ);
+        good++;
       }
+      delay(10);
+    }
+    if (good > 0) {
+      mpuZeroTiltDeg[i] = sum / good;
+      lastMpuTiltDeg[i] = 0;
+      lastMpuServoAngles[i] = SERVO_CENTER_ANGLE;
+      filteredServoAngles[i] = SERVO_CENTER_ANGLE;
+      Serial.print("MPU ");
+      Serial.print(i + 1);
+      Serial.print(" neutral ");
+      Serial.print(mpuZeroTiltDeg[i], 1);
+      Serial.println(" deg.");
+    } else {
+      mpuReady[i] = false;
+      Serial.print("MPU ");
+      Serial.print(i + 1);
+      Serial.println(" sin muestras validas para neutral.");
+    }
+  }
+  tcaDisableAll();
+  Serial.println("Calibracion neutral MPU lista.");
+}
 
-      delayMicroseconds(IMU_READ_SETTLE_US);                                          // Llamada: ejecuta API de hardware, red o utilidad local.
-      bool primary = i2cPing(MPU_ADDR);                                               // Variable primary: estado mutable de primary.
-      bool alternate = i2cPing(altMpuAddr);                                           // Variable alternate: estado mutable de alternate.
-      bool as5600 = i2cPing(AS5600_ADDR);                                             // Variable as5600: sensor magnetico detectado en este canal.
-      item["mpu"] = primary;                                                          // Asignacion: actualiza estado del firmware.
-      item["altMpu"] = alternate;                                                     // Asignacion: actualiza estado del firmware.
-      item["altAddr"] = altMpuAddr;                                                   // Asignacion: actualiza estado del firmware.
-      item["as5600"] = as5600;                                                        // Asignacion: actualiza estado del firmware.
-      if (!used) {                                                                    // Condicion: valida estado de hardware o comando.
-        item["status"] = primary || alternate || as5600 ? "extra" : "unused";         // Asignacion: actualiza estado del firmware.
-      } else if (imuIdx >= 0 && primary) {
-        item["status"] = "ok";                                                        // Asignacion: actualiza estado del firmware.
-        okCount++;
-      } else if (imuIdx >= 0 && alternate) {
-        item["status"] = "addr_mismatch";                                             // Asignacion: actualiza estado del firmware.
-        mismatchCount++;
-      } else if (imuIdx >= 0) {
-        item["status"] = "missing";                                                   // Asignacion: actualiza estado del firmware.
-        missingCount++;
-      } else if (as5600) {
-        item["status"] = "ok_as5600";                                                 // Asignacion: actualiza estado del firmware.
-        as5600OkCount++;
+// Funcion       | updateServoFromButton: actualiza codo con boton N.A. filtrado.
+void updateServoFromButton(byte index, bool showStatus) {
+  if (!buttonReady[index]) {
+    return;
+  }
+  bool pressed = digitalRead(BUTTON_PINS[index]) == LOW;
+  if (INVERT_BUTTON[index]) {
+    pressed = !pressed;
+  }
+  buttonPressed[index] = pressed;
+
+  unsigned long now = millis();
+  byte elbow = BUTTON_ELBOW_INDEX[index];
+  if (pressed) {
+    unsigned long steps = 0;
+    if (!buttonWasPressed[index]) {
+      steps = 1;
+      buttonLastStepMs[index] = now + BUTTON_HOLD_START_MS;
+    } else if ((long)(now - buttonLastStepMs[index]) >= 0) {
+      unsigned long elapsed = now - buttonLastStepMs[index];
+      steps = 1 + (elapsed / BUTTON_STEP_INTERVAL_MS);
+      buttonLastStepMs[index] += (unsigned long)steps * BUTTON_STEP_INTERVAL_MS;
+    }
+    if (steps > 0) {
+      buttonServoAngles[elbow] += BUTTON_DIRECTIONS[index] * BUTTON_STEP_ANGLE * steps;
+    }
+  } else {
+    buttonLastStepMs[index] = now;
+  }
+  buttonWasPressed[index] = pressed;
+  buttonServoAngles[elbow] = constrain(buttonServoAngles[elbow], BUTTON_OPEN_ANGLE, BUTTON_PRESSED_ANGLE);
+  filteredButtonServoAngles[elbow] = buttonServoAngles[elbow];
+  int servoAngle = constrain(buttonServoAngles[elbow], BUTTON_OPEN_ANGLE, BUTTON_PRESSED_ANGLE);
+  if (servosArmed) {
+    setServoAngle(BUTTON_SERVO_CHANNELS[elbow], servoAngle);
+  }
+  if (showStatus) {
+    Serial.print("Boton N.A. ");
+    Serial.print(index + 1);
+    Serial.print(" -> servo canal ");
+    Serial.print(BUTTON_SERVO_CHANNELS[elbow]);
+    Serial.print(BUTTON_DIRECTIONS[index] > 0 ? " sube" : " baja");
+    Serial.print(": ");
+    Serial.print(pressed ? "presionado" : "abierto");
+    Serial.print(", angulo ");
+    Serial.println(servoAngle);
+  }
+}
+// Funcion       | updateServoFromMpu: actualiza servo desde inclinacion IMU filtrada.
+void updateServoFromMpu(byte index, bool showStatus) {
+  if (!mpuReady[index]) {
+    return;
+  }
+  if (!tcaSelect(TCA_CHANNELS[index])) {
+    if (showStatus) {
+      Serial.print("MPU6050 ");
+      Serial.print(index + 1);
+      Serial.println(": no se pudo seleccionar el canal TCA.");
+    }
+    // Agregado: un canal TCA que no responde tambien cuenta como fallo.
+    if (++mpuFaults[index] >= SENSOR_FAULT_LIMIT) {
+      mpuReady[index] = false;
+      Serial.print("MPU6050 ");
+      Serial.print(index + 1);
+      Serial.println(": marcado offline tras fallos repetidos.");
+    }
+    return;
+  }
+  float accelX = 0;
+  float accelY = 0;
+  float accelZ = 0;
+  if (!readMpuAccel(index, &accelX, &accelY, &accelZ)) {
+    if (showStatus) {
+      Serial.print("MPU6050 ");
+      Serial.print(index + 1);
+      Serial.println(": lectura fallida.");
+    }
+    // Agregado: tras varios fallos seguidos se marca offline para que el loop lo re-detecte.
+    if (++mpuFaults[index] >= SENSOR_FAULT_LIMIT) {
+      mpuReady[index] = false;
+      Serial.print("MPU6050 ");
+      Serial.print(index + 1);
+      Serial.println(": marcado offline tras fallos repetidos.");
+    }
+    return;
+  }
+  mpuFaults[index] = 0;
+  float tiltDeg = getTiltDeg(index, accelX, accelY, accelZ) - mpuZeroTiltDeg[index];
+  int targetAngle = tiltToServoAngle(tiltDeg);
+  filteredServoAngles[index] = FILTER_ALPHA * targetAngle + (1.0 - FILTER_ALPHA) * filteredServoAngles[index];
+  int servoAngle = constrain((int)(filteredServoAngles[index] + 0.5), MIN_ANGLE, MAX_ANGLE);
+  lastMpuTiltDeg[index] = tiltDeg;
+  lastMpuServoAngles[index] = servoAngle;
+  if (servosArmed) {
+    setServoAngle(CONTROLLED_SERVO_CHANNELS[index], servoAngle);
+  }
+  if (showStatus) {
+    Serial.print("MPU ");
+    Serial.print(index + 1);
+    Serial.print(" -> servo canal ");
+    Serial.print(CONTROLLED_SERVO_CHANNELS[index]);
+    Serial.print(": inclinacion ");
+    Serial.print(tiltDeg, 1);
+    Serial.print(" deg, angulo ");
+    Serial.println(servoAngle);
+  }
+}
+
+// =====================================================================
+// Rutinas de verificacion de subida (agregadas).
+// =====================================================================
+
+// Diagnostico I2C de arranque: escanea el bus raiz y cada canal del TCA.
+// Funcion       | bootI2CDiagnostic: imprime diagnostico de bus raiz y canales TCA al arrancar.
+void bootI2CDiagnostic() {
+  Serial.println("=== Verificacion de subida: diagnostico I2C ===");
+  tcaDisableAll();
+  Serial.print("Escaneo I2C raiz (sin TCA):");
+  bool any = false;
+  for (byte a = 1; a < 127; a++) {
+    if (deviceFound(a)) {
+      Serial.print(" ");
+      printHexAddress(a);
+      any = true;
+    }
+  }
+  if (!any) {
+    Serial.print(" sin dispositivos");
+  }
+  Serial.println();
+  if (deviceFound(TCA9548A_ADDR)) {
+    Serial.println("TCA9548A OK en 0x70. Escaneando canales 0-7:");
+    for (byte ch = 0; ch < 8; ch++) {
+      if (tcaSelect(ch)) {
+        scanSelectedTcaChannel(ch);
       } else {
-        item["status"] = "missing_as5600";                                            // Asignacion: actualiza estado del firmware.
-        missingAs5600Count++;
-      }
-      tcaOff();                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-      delay(2);                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-  } else {
-    missingCount = NUM_IMUS;                                                          // Asignacion: actualiza estado del firmware.
-    missingAs5600Count = NUM_AS5600;                                                  // Asignacion: actualiza estado del firmware.
-  }
-
-  doc["okCount"] = okCount;                                                           // Asignacion: actualiza estado del firmware.
-  doc["as5600OkCount"] = as5600OkCount;                                               // Asignacion: actualiza estado del firmware.
-  doc["mismatchCount"] = mismatchCount;                                               // Asignacion: actualiza estado del firmware.
-  doc["missingCount"] = missingCount;                                                 // Asignacion: actualiza estado del firmware.
-  doc["missingAs5600Count"] = missingAs5600Count;                                     // Asignacion: actualiza estado del firmware.
-  doc["summary"] = !tcaPresent                                                        // Asignacion: actualiza estado del firmware.
-    ? "TCA9548A no detectado"
-    : okCount == NUM_IMUS && as5600OkCount == NUM_AS5600
-      ? "4 MPU + 2 AS5600 detectados"
-      : okCount == NUM_IMUS && missingAs5600Count > 0
-        ? "Faltan AS5600 en canales TCA"
-    : mismatchCount > 0
-      ? "MPU en direccion alterna"
-      : "Faltan MPU en canales TCA";
-
-  String out;                                                                         // Declaracion out: dato de out.
-  serializeJson(doc, out);                                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-  if (client == SERIAL_CLIENT) {                                                      // Condicion: valida estado de hardware o comando.
-    sendSerialJson(doc);                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else {
-    ws.sendTXT(client, out);                                                          // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-}
-
-bool controlNetworkOnline() {                                                         // Funcion controlNetworkOnline: encapsula la logica de control network online.
-  return WiFi.status() == WL_CONNECTED || s3ApActive;                                 // Retorno: informa resultado de la operacion.
-}
-
-String controllerIp() {                                                               // Funcion controllerIp: encapsula la logica de controller ip.
-  if (WiFi.status() == WL_CONNECTED) return WiFi.localIP().toString();                // Condicion: valida estado de hardware o comando.
-  if (s3ApActive) return WiFi.softAPIP().toString();                                  // Condicion: valida estado de hardware o comando.
-  return "";                                                                          // Retorno: informa resultado de la operacion.
-}
-
-String controllerWsUrl() {                                                            // Funcion controllerWsUrl: encapsula la logica de comunicaciones y puertos.
-  String ip = controllerIp();                                                         // Variable ip: estado mutable de ip.
-  if (!ip.length() || ip == "0.0.0.0") return "";                                     // Condicion: valida estado de hardware o comando.
-  return String("ws://") + ip + ":" + String(WS_PORT);
-}
-
-String controllerMdnsUrl() {                                                          // Funcion controllerMdnsUrl: encapsula la logica de controller mdns url.
-  return String("ws://") + MDNS_HOST + ".local:" + String(WS_PORT);
-}
-
-void sendAck(uint8_t client) {                                                        // Funcion sendAck: envia ack.
-  JsonDocument doc;                                                                   // Declaracion doc: dato de doc.
-  doc["type"] = "ack";                                                                // Asignacion: actualiza estado del firmware.
-  doc["fw"] = "VESTA-S3-3.3";                                                         // Asignacion: actualiza estado del firmware.
-  doc["hw"] = "ESP32-S3 N16R8";                                                       // Asignacion: actualiza estado del firmware.
-  doc["role"] = "controller";                                                         // Asignacion: actualiza estado del firmware.
-  doc["servos"] = N_SERVOS;                                                           // Asignacion: actualiza estado del firmware.
-  doc["imus"] = NUM_IMUS;                                                             // Asignacion: actualiza estado del firmware.
-  doc["as5600"] = NUM_AS5600;                                                         // Asignacion: actualiza estado del firmware.
-  doc["pcaOnline"] = pcaOnline;                                                       // Asignacion: informa si el driver PWM responde por I2C.
-  doc["armed"] = servosArmed;                                                         // Asignacion: informa si PWM de servos esta habilitado.
-  doc["sensorless"] = !sensorsEnabled();                                               // Asignacion: informa si la prueba manual ignora sensores.
-  doc["camOnline"] = camOnline;                                                       // Asignacion: actualiza estado del firmware.
-  doc["wifi"] = WiFi.status() == WL_CONNECTED;                                        // Asignacion: actualiza estado del firmware.
-  doc["ap"] = s3ApActive;                                                             // Asignacion: actualiza estado del firmware.
-  if (s3ApActive) doc["apSsid"] = S3_AP_SSID;                                         // Condicion: valida estado de hardware o comando.
-  doc["ip"] = controllerIp();                                                         // Asignacion: actualiza estado del firmware.
-  doc["wsPort"] = WS_PORT;                                                            // Asignacion: actualiza estado del firmware.
-  doc["mdnsHost"] = String(MDNS_HOST) + ".local";                                     // Asignacion: actualiza estado del firmware.
-  doc["wsUrl"] = controllerWsUrl();                                                   // Asignacion: actualiza estado del firmware.
-  doc["mdnsUrl"] = controllerMdnsUrl();                                               // Asignacion: actualiza estado del firmware.
-  doc["ble"] = BLE_ENABLED != 0;                                                      // Asignacion: actualiza estado del firmware.
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-  doc["bleName"] = BLE_DEVICE_NAME;                                                   // Asignacion: actualiza estado del firmware.
-  doc["bleService"] = BLE_SERVICE_UUID;                                               // Asignacion: actualiza estado del firmware.
-  doc["bleConnected"] = bleConnected;                                                 // Asignacion: actualiza estado del firmware.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-  JsonArray links = doc["links"].to<JsonArray>();
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    const SensorLink& link = SENSOR_LINKS[i];
-    JsonObject item = links.add<JsonObject>();                                        // Variable item: estado mutable de item.
-    item["servoId"] = link.servoId;                                                   // Asignacion: actualiza estado del firmware.
-    item["kind"] = link.sensorKind == SENSOR_KIND_IMU ? "imu" : "as5600";             // Asignacion: actualiza estado del firmware.
-    item["sensorId"] = link.sensorId;                                                 // Asignacion: actualiza estado del firmware.
-    item["source"] = sensorSourceName(link);                                          // Asignacion: actualiza estado del firmware.
-  }
-
-  String out;                                                                         // Declaracion out: dato de out.
-  serializeJson(doc, out);                                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-  if (client == SERIAL_CLIENT) {                                                      // Condicion: valida estado de hardware o comando.
-    sendSerialJson(doc);                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else {
-    ws.sendTXT(client, out);                                                          // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-}
-
-void broadcastJson(JsonDocument& doc) {                                               // Funcion broadcastJson: encapsula la logica de sensores y comunicaciones.
-  String out;                                                                         // Declaracion out: dato de out.
-  serializeJson(doc, out);                                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-  ws.broadcastTXT(out);                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  // Only mirror to Serial when no live WS clients are listening; this prevents
-  // the 115200-baud UART from stalling the 50 Hz control loop when the app is
-  // already connected over WiFi.
-  if (ws.connectedClients(false) == 0) sendSerialJson(doc);                           // Condicion: valida estado de hardware o comando.
-}
-
-void sendData() {                                                                     // Funcion sendData: emite telemetria completa del controlador.
-  JsonDocument doc;                                                                   // Declaracion doc: dato de doc.
-  doc["type"] = "sensors";                                                            // Asignacion: actualiza estado del firmware.
-  doc["t"] = millis();                                                                // Asignacion: actualiza estado del firmware.
-  doc["mode"] = opMode;                                                               // Asignacion: actualiza estado del firmware.
-  doc["emergency"] = emergency;                                                       // Asignacion: actualiza estado del firmware.
-  doc["estop"] = false;                                                               // Sin boton fisico de paro: el campo se reporta siempre en false.
-  doc["armed"] = servosArmed;                                                         // Asignacion: reporta si el PWM de servos esta habilitado.
-  doc["assist"] = assistLevel;                                                        // Asignacion: actualiza estado del firmware.
-  doc["deadband"] = deadbandDeg;                                                      // Asignacion: actualiza estado del firmware.
-  doc["smoothing"] = smoothing;                                                       // Asignacion: reporta suavizado activo de la rampa.
-  doc["maxSpeedDegSec"] = maxSpeedDegSec;                                             // Asignacion: reporta velocidad maxima activa.
-  doc["pcaOnline"] = pcaOnline;                                                       // Asignacion: reporta presencia del PCA9685.
-  doc["sensorless"] = !sensorsEnabled();                                               // Asignacion: reporta que la telemetria viene sin lectura de sensores.
-  doc["camOnline"] = camOnline;                                                       // Asignacion: actualiza estado del firmware.
-
-  JsonArray arr = doc["servos"].to<JsonArray>();
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    const SensorLink& link = linkForServo(i);
-    JsonObject s = arr.add<JsonObject>();                                             // Variable s: estado mutable de s.
-    s["id"] = i;                                                                      // Asignacion: actualiza estado del firmware.
-    s["channel"] = servoCfg[i].channel;                                               // Asignacion: actualiza estado del firmware.
-    s["angle"] = round(currentDeg[i] * 10.0f) / 10.0f;                                // Asignacion: actualiza estado del firmware.
-    s["target"] = round(targetDeg[i] * 10.0f) / 10.0f;                                // Asignacion: actualiza estado del firmware.
-    s["pwm"] = angleToPwm(i, currentDeg[i]);                                          // Asignacion: expone el pulso que se manda al PCA9685.
-    s["sensor"] = round(sensorDeg[i] * 10.0f) / 10.0f;                                // Asignacion: actualiza estado del firmware.
-    s["sensorKind"] = link.sensorKind == SENSOR_KIND_IMU ? "imu" : "as5600";          // Asignacion: actualiza estado del firmware.
-    s["sensorId"] = link.sensorId;                                                    // Asignacion: actualiza estado del firmware.
-    s["sensorSource"] = sensorSourceName(link);                                       // Asignacion: actualiza estado del firmware.
-    if (link.sensorKind == SENSOR_KIND_IMU) {                                         // Condicion: valida estado de hardware o comando.
-      s["raw"] = round(cf[link.sensorId].angle * 10.0f) / 10.0f;                      // Asignacion: actualiza estado del firmware.
-      s["neutral"] = round(imuCfg[link.sensorId].neutralDeg * 10.0f) / 10.0f;         // Asignacion: actualiza estado del firmware.
-      s["online"] = imuOnline[link.sensorId];                                         // Asignacion: actualiza estado del firmware.
-      s["faults"] = imuFaults[link.sensorId];                                         // Asignacion: actualiza estado del firmware.
-    } else {
-      s["raw"] = as5600Raw[link.sensorId];                                            // Asignacion: actualiza estado del firmware.
-      bool online = as5600IsOnline(link.sensorId);                                    // Variable online: estado mutable de online.
-      s["online"] = online;                                                           // Asignacion: actualiza estado del firmware.
-      s["faults"] = as5600Faults[link.sensorId];                                      // Asignacion: actualiza estado del firmware.
-    }
-    s["moving"] = servosArmed && fabsf(targetDeg[i] - currentDeg[i]) > 0.5f;          // Asignacion: no reporta movimiento mientras PWM esta desarmado.
-    s["amp"] = 0.0f;                                                                  // Asignacion: actualiza estado del firmware.
-    s["temp"] = 0.0f;                                                                 // Asignacion: actualiza estado del firmware.
-  }
-
-  JsonObject bat = doc["battery"].to<JsonObject>();                                   // Variable bat: estado mutable de bat.
-  bat["v"] = 11.1f;                                                                   // Asignacion: actualiza estado del firmware.
-  bat["pct"] = 100.0f;                                                                // Asignacion: actualiza estado del firmware.
-  bat["amp"] = 0.0f;                                                                  // Asignacion: actualiza estado del firmware.
-
-  broadcastJson(doc);                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void applyServoConfig(int id, JsonObject s) {                                         // Funcion applyServoConfig: aplica servo config.
-  if (id < 0 || id >= N_SERVOS || s.isNull()) return;                                 // Condicion: valida estado de hardware o comando.
-  servoCfg[id].channel = (uint8_t)constrain((int)(s["channel"] | servoCfg[id].channel), 0, 15); // Asignacion: actualiza estado del firmware.
-
-  JsonObject angle = s["angle"];                                                      // Variable angle: estado mutable de control angular de servos.
-  if (!angle.isNull()) {                                                              // Condicion: valida estado de hardware o comando.
-    servoCfg[id].minDeg = angle["min"] | servoCfg[id].minDeg;                         // Asignacion: actualiza estado del firmware.
-    servoCfg[id].maxDeg = angle["max"] | servoCfg[id].maxDeg;                         // Asignacion: actualiza estado del firmware.
-    servoCfg[id].homeDeg = angle["home"] | servoCfg[id].homeDeg;                      // Asignacion: actualiza estado del firmware.
-    int dir = angle["direction"] | servoCfg[id].direction;                            // Variable dir: estado mutable de dir.
-    servoCfg[id].direction = dir < 0 ? -1 : 1;                                        // Asignacion: actualiza estado del firmware.
-    servoCfg[id].offsetDeg = angle["mechanicalOffset"] | servoCfg[id].offsetDeg;      // Asignacion: actualiza estado del firmware.
-  }
-
-  JsonObject pwm = s["pwm"];                                                          // Variable pwm: estado mutable de control angular de servos.
-  if (!pwm.isNull()) {                                                                // Condicion: valida estado de hardware o comando.
-    servoCfg[id].pwm0 = pwm["at0deg"] | servoCfg[id].pwm0;                            // Asignacion: actualiza estado del firmware.
-    servoCfg[id].pwm270 = pwm["at270deg"] | servoCfg[id].pwm270;                      // Asignacion: actualiza estado del firmware.
-  }
-  sanitizeServoConfig(id);                                                            // Llamada: evita que un perfil invalido apague el PWM.
-}
-
-void applyCalibrationProfile(JsonDocument& doc) {                                     // Funcion applyCalibrationProfile: aplica calibration profile.
-  JsonVariant root = doc.as<JsonVariant>();
-  if (!doc["profile"].isNull()) root = doc["profile"];                                // Condicion: valida estado de hardware o comando.
-
-  JsonArray servos = root["servos"].as<JsonArray>();
-  for (JsonObject s : servos) {                                                       // Bucle: recorre muestras, servos o clientes.
-    int id = s["id"] | -1;                                                            // Variable id: estado mutable de id.
-    applyServoConfig(id, s);                                                          // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  JsonArray imus = root["sensors"]["imus"].as<JsonArray>();
-  for (JsonObject item : imus) {                                                      // Bucle: recorre muestras, servos o clientes.
-    int bus = item["bus"] | -1;                                                       // Variable bus: estado mutable de bus.
-    if (bus < 0 || bus >= NUM_IMUS) continue;                                         // Condicion: valida estado de hardware o comando.
-    imuCfg[bus].neutralDeg = item["neutralDeg"] | imuCfg[bus].neutralDeg;             // Asignacion: actualiza estado del firmware.
-    imuCfg[bus].minDeg = item["minDeg"] | imuCfg[bus].minDeg;                         // Asignacion: actualiza estado del firmware.
-    imuCfg[bus].maxDeg = item["maxDeg"] | imuCfg[bus].maxDeg;                         // Asignacion: actualiza estado del firmware.
-    imuCfg[bus].invert = item["invert"] | imuCfg[bus].invert;                         // Asignacion: actualiza estado del firmware.
-  }
-
-  JsonArray as5600 = root["sensors"]["as5600"].as<JsonArray>();
-  if (as5600.isNull()) as5600 = root["as5600"].as<JsonArray>();                       // Condicion: valida estado de hardware o comando.
-  for (JsonObject item : as5600) {                                                    // Bucle: recorre muestras, servos o clientes.
-    int servoId = item["servoId"] | -1;                                               // Variable servoId: estado mutable de control angular de servos.
-    int idx = servoId == SRV_L_ELB ? 0 : servoId == SRV_R_ELB ? 1 : -1;               // Variable idx: estado mutable de idx.
-    if (idx < 0) continue;                                                            // Condicion: valida estado de hardware o comando.
-    as5600Cfg[idx].raw0 = item["raw0"] | as5600Cfg[idx].raw0;                         // Asignacion: actualiza estado del firmware.
-    as5600Cfg[idx].raw90 = item["raw90"] | as5600Cfg[idx].raw90;                      // Asignacion: actualiza estado del firmware.
-    as5600Cfg[idx].neutralDeg = item["neutralDeg"] | as5600Cfg[idx].neutralDeg;       // Asignacion: actualiza estado del firmware.
-    as5600Cfg[idx].invert = item["invert"] | as5600Cfg[idx].invert;                   // Asignacion: actualiza estado del firmware.
-    resetAs5600Tracking(idx);                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  JsonObject tuning = root["tuning"];                                                 // Variable tuning: estado mutable de tuning.
-  applyTuningObject(tuning);                                                          // Llamada: actualiza rampa de movimiento desde perfil/app.
-  sanitizeRuntimeConfig();                                                            // Llamada: normaliza rampa, PWM y limites antes de guardar.
-  savePrefs();                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void processCamPacket(JsonDocument& doc) {                                            // Funcion processCamPacket: procesa cam packet.
-  camOnline = true;                                                                   // Asignacion: actualiza estado del firmware.
-  lastCamMs = millis();                                                               // Asignacion: actualiza estado del firmware.
-  JsonDocument out;                                                                   // Declaracion out: dato de out.
-  out["type"] = "cam_bridge";                                                         // Asignacion: actualiza estado del firmware.
-  out["t"] = millis();                                                                // Asignacion: actualiza estado del firmware.
-  out["cam"] = doc;                                                                   // Asignacion: actualiza estado del firmware.
-  broadcastJson(out);                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-}
-
-void processCmd(const String& json, uint8_t client) {                                 // Funcion processCmd: interpreta comandos JSON entrantes.
-  JsonDocument doc;                                                                   // Declaracion doc: dato de doc.
-  DeserializationError err = deserializeJson(doc, json);
-  if (err) {                                                                          // Condicion: valida estado de hardware o comando.
-    Serial.printf("[RX] Bad JSON: %s\n", err.c_str());                                // Llamada: ejecuta API de hardware, red o utilidad local.
-    return;                                                                           // Retorno: informa resultado de la operacion.
-  }
-
-  const char* type = doc["type"] | "";
-
-  if (!strcmp(type, "cam_hello") || !strcmp(type, "cam_status") || !strcmp(type, "audio_event")) { // Condicion: valida estado de hardware o comando.
-    processCamPacket(doc);                                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-    return;                                                                           // Retorno: informa resultado de la operacion.
-  }
-
-  if (!strcmp(type, "cmd_angle")) {                                                   // Condicion: valida estado de hardware o comando.
-    int id = doc["id"] | -1;                                                          // Variable id: estado mutable de id.
-    float ang = doc["angle"] | 0.0f;                                                  // Variable ang: estado mutable de ang.
-    if (!emergency && id >= 0 && id < N_SERVOS) {                                     // Condicion: valida estado de hardware o comando.
-      JsonObject servo = doc["servo"];                                                // Variable servo: estado mutable de control angular de servos.
-      applyServoConfig(id, servo);                                                    // Llamada: ejecuta API de hardware, red o utilidad local.
-      // El usuario tomo control explicito de un servo: forzar modo manual.
-      // Sin esto, en assisted/automatic el updateTargetsFromSensors()
-      // sobrescribe el target a los 20 ms y la UI parece "no dejar mover".
-      if (opMode != "manual") opMode = "manual";                                      // Condicion: valida estado de hardware o comando.
-      targetDeg[id] = clampServoDeg(id, ang);                                         // Asignacion: actualiza estado del firmware.
-      armServos("cmd_angle");                                                         // Llamada: movimiento manual explicito habilita PWM.
-    }
-  } else if (!strcmp(type, "cmd_mode")) {
-    const char* m = doc["mode"] | "manual";
-    if (!emergency) {
-      opMode = String(normalizeRequestedMode(m));                                     // Condicion: evita modos con sensores durante prueba manual.
-      if (opMode != "manual") {
-        syncServoStateToCurrentSensors();                                             // Llamada: evita salto a home al entrar a modo con sensores.
-        armServos("cmd_mode");                                                        // Condicion: assisted/automatic son inicio explicito.
+        Serial.print("Canal ");
+        Serial.print(ch);
+        Serial.println(": no se pudo seleccionar.");
       }
     }
-  } else if (!strcmp(type, "cmd_arm")) {
-    syncServoStateToCurrentSensors();                                                  // Llamada: primer PWM sigue la postura actual estimada.
-    armServos("cmd_arm");                                                             // Llamada: habilita PWM sin cambiar modo.
-    sendAck(client);                                                                  // Llamada: confirma estado armed a la consola.
-  } else if (!strcmp(type, "cmd_disarm")) {
-    disarmServos("cmd_disarm");                                                       // Llamada: libera PWM sin entrar en emergencia.
-    sendAck(client);                                                                  // Llamada: confirma estado armed a la consola.
-  } else if (!strcmp(type, "cmd_tuning")) {
-    JsonObject tuning = doc["tuning"];                                                // Variable tuning: parametros de rampa enviados por la UI.
-    if (tuning.isNull()) tuning = doc.as<JsonObject>();                               // Compatibilidad: acepta campos al nivel raiz.
-    applyTuningObject(tuning);                                                        // Llamada: acelera manual/sensor sin reenviar perfil completo.
-    savePrefs();                                                                      // Llamada: conserva velocidad rapida tras reinicio.
-    sendAck(client);                                                                  // Llamada: confirma el cambio a la consola.
-  } else if (!strcmp(type, "cmd_assist")) {
-    applyTuningObject(doc.as<JsonObject>());                                          // Llamada: cmd_assist queda compatible y normalizado.
-    savePrefs();                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (!strcmp(type, "cmd_stop")) {
-    setEmergency(true, "remote command");                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (!strcmp(type, "cmd_reset")) {
-    // Sin boton fisico de paro: el reset remoto siempre procede.
-    setEmergency(false, "remote reset");                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-    applyBootBehavior();                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-    disarmServos("remote reset");                                                     // Llamada: reset vuelve a estado seguro sin mover a home.
-  } else if (!strcmp(type, "cmd_calibrate")) {
-    if (sensorsEnabled()) {                                                           // Condicion: calibra IMU solo cuando los sensores estan activos.
-      calibrateIMUs();                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-    } else {
-      Serial.println("[SENSORLESS] IMU calibration skipped.");                        // Llamada: informa que la prueba manual ignora sensores.
-    }
-  } else if (!strcmp(type, "cmd_i2c_diag")) {
-    diagnoseI2CBus();                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-    sendI2CDiagnostic(client);                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (!strcmp(type, "cmd_home")) {
-    for (int i = 0; i < N_SERVOS; i++) targetDeg[i] = servoCfg[i].homeDeg;            // Bucle: recorre muestras, servos o clientes.
-    armServos("cmd_home");                                                            // Llamada: home es movimiento explicito.
-  } else if (!strcmp(type, "cmd_status")) {
-    sendAck(client);                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-    sendData();                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (!strcmp(type, "cmd_calibration_profile")) {
-    applyCalibrationProfile(doc);                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-    sendAck(client);                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else if (!strcmp(type, "cmd_calibration_servos") ||
-             !strcmp(type, "cmd_calibration_sensors") ||
-             !strcmp(type, "cmd_calibration_mapping")) {
-    applyCalibrationProfile(doc);                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-    sendAck(client);                                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-}
-
-void wsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {              // Funcion wsEvent: atiende eventos WebSocket del controlador.
-  switch (type) {                                                                     // Selector: despacha por tipo de evento o comando.
-    case WStype_CONNECTED:                                                            // Caso: evento o comando especifico.
-      Serial.printf("[WS] Client %u connected from %s\n", num, ws.remoteIP(num).toString().c_str()); // Llamada: ejecuta API de hardware, red o utilidad local.
-      sendAck(num);                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-      break;
-    case WStype_DISCONNECTED:                                                         // Caso: evento o comando especifico.
-      Serial.printf("[WS] Client %u disconnected\n", num);                            // Llamada: ejecuta API de hardware, red o utilidad local.
-      break;
-    case WStype_TEXT:                                                                 // Caso: evento o comando especifico.
-      processCmd(String((char*)payload, len), num);                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-      break;
-    default:                                                                          // Campo default: dato miembro de estructura o JSON.
-      break;
-  }
-}
-
-void readSerialCommands() {                                                           // Funcion readSerialCommands: lee comandos JSON desde el puerto serial.
-  while (Serial.available()) {                                                        // Bucle: recorre muestras, servos o clientes.
-    char c = (char)Serial.read();                                                     // Variable c: estado mutable de c.
-    if (c == '\r') continue;                                                          // Condicion: valida estado de hardware o comando.
-    if (c == '\n') {                                                                  // Condicion: valida estado de hardware o comando.
-      serialLine.trim();                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-      if (serialLine.startsWith("{")) {                                               // Condicion: valida estado de hardware o comando.
-        processCmd(serialLine, SERIAL_CLIENT);                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-      }
-      serialLine = "";                                                                // Asignacion: actualiza estado del firmware.
-      continue;
-    }
-    if (serialLine.length() < 4096) {                                                 // Condicion: valida estado de hardware o comando.
-      serialLine += c;
-    } else {
-      serialLine = "";                                                                // Asignacion: actualiza estado del firmware.
-    }
-  }
-}
-
-void announceWifiUp() {                                                               // Funcion announceWifiUp: encapsula la logica de comunicaciones y puertos.
-  String ip = WiFi.localIP().toString();                                              // Variable ip: estado mutable de ip.
-  Serial.printf("[WiFi] IP: %s\n", ip.c_str());                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-  Serial.printf("[WS] URL: ws://%s:%d\n", ip.c_str(), WS_PORT);
-}
-
-void startBatteryAccessPoint() {                                                      // Funcion startBatteryAccessPoint: inicia battery access point.
-  if (s3ApActive) return;                                                             // Condicion: valida estado de hardware o comando.
-  WiFi.mode(WIFI_AP_STA);                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-  WiFi.setSleep(false);                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  bool ok = WiFi.softAP(S3_AP_SSID, S3_AP_PASSWORD, S3_AP_CHANNEL, 0, S3_AP_MAX_CLIENTS); // Variable ok: estado mutable de ok.
-  s3ApActive = ok;                                                                    // Asignacion: actualiza estado del firmware.
-  if (ok) {                                                                           // Condicion: valida estado de hardware o comando.
-    Serial.printf("[AP] %s ready at %s\n", S3_AP_SSID, WiFi.softAPIP().toString().c_str()); // Llamada: ejecuta API de hardware, red o utilidad local.
-    Serial.printf("[WS] URL: ws://%s:%d\n", WiFi.softAPIP().toString().c_str(), WS_PORT);
+    tcaDisableAll();
   } else {
-    Serial.println("[AP] failed to start battery fallback");                          // Llamada: ejecuta API de hardware, red o utilidad local.
+    Serial.println("ERROR: TCA9548A no detectado en 0x70.");
   }
 }
 
-void startWebSocketServer() {                                                         // Funcion startWebSocketServer: inicia web socket server.
-  if (wsStarted) return;                                                              // Condicion: valida estado de hardware o comando.
-  if (!controlNetworkOnline()) {                                                      // Condicion: valida estado de hardware o comando.
-    Serial.println("[WS] Waiting for WiFi/AP before starting server.");               // Llamada: ejecuta API de hardware, red o utilidad local.
-    return;                                                                           // Retorno: informa resultado de la operacion.
+// Inicio seguro: no centra ni barre los servos al arrancar.
+// Funcion       | initializeServosSafely: inicializa PCA sin mover servos automaticamente.
+void initializeServosSafely() {
+  servosArmed = false;
+  servoArmPending = false;
+  if (!pcaOnline) {
+    Serial.println("Inicio seguro: PCA9685 no responde, no se envia PWM a servos.");
+    return;
   }
-  ws.begin();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-  ws.onEvent(wsEvent);                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  // Heartbeat lenient on purpose: a strict ping/pong over WiFi was kicking
-  // healthy browser sessions on every signal hiccup and causing reconnect
-  // loops. The browser-side auto-reconnect handles real disconnects fast.
-  ws.enableHeartbeat(8000, 3000, 3);                                                  // Llamada: ejecuta API de hardware, red o utilidad local.
-  wsStarted = true;                                                                   // Asignacion: actualiza estado del firmware.
-  Serial.printf("[WS] Server on port %d\n", WS_PORT);                                 // Llamada: ejecuta API de hardware, red o utilidad local.
+  releaseControlledServos();
+  Serial.println("Inicio seguro: servos DESARMADOS, PWM liberado, sin centrado ni barrido.");
+  Serial.println("Para habilitar movimiento envia cmd_arm / armar; cmd_stop, cmd_reset o cmd_disarm vuelven a desarmar.");
 }
 
-void connectWifi() {                                                                  // Funcion connectWifi: conecta o prepara WiFi para operacion autonoma.
-  WiFi.mode(WIFI_STA);                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  WiFi.setSleep(false);                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  WiFi.persistent(false);                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
-  WiFi.setAutoReconnect(true);                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  esp_wifi_set_ps(WIFI_PS_NONE);                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  const int attempts = max(1, WIFI_BOOT_CONNECT_TIMEOUT_MS / 200);                    // Variable attempts: constante usada en attempts.
-  // Keep startup short for battery use; loop() keeps retrying in background.
-  for (int i = 0; i < attempts && WiFi.status() != WL_CONNECTED; i++) {               // Bucle: recorre muestras, servos o clientes.
-    delay(200);                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-    Serial.print(".");                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
+// Funcion       | primeServoFilters: precarga filtros con posiciones neutras seguras.
+void primeServoFilters() {
+  Serial.println("Tomando referencia de sensores sin mover servos...");
+  for (byte sample = 0; sample < SAFE_ARM_PRIME_SAMPLES; sample++) {
+    for (byte i = 0; i < MPU_COUNT; i++) {
+      updateServoFromMpu(i, false);
+    }
+    for (byte i = 0; i < BUTTON_COUNT; i++) {
+      updateServoFromButton(i, false);
+    }
+    delay(LOOP_DELAY_MS);
   }
-  Serial.println();                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
-  if (WiFi.status() == WL_CONNECTED) {                                                // Condicion: valida estado de hardware o comando.
-    wifiUp = true;                                                                    // Asignacion: actualiza estado del firmware.
-    announceWifiUp();                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-  } else {
-    Serial.println("[WiFi] Initial connect pending. Starting battery AP fallback.");  // Llamada: ejecuta API de hardware, red o utilidad local.
-    startBatteryAccessPoint();                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-    startWebSocketServer();                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-  tWifiRetry = millis();                                                              // Asignacion: actualiza estado del firmware.
+  Serial.println("Referencia lista: los servos siguen desarmados hasta cmd_arm.");
 }
 
-void wifiKeepalive() {                                                                // Funcion wifiKeepalive: mantiene la conectividad WiFi durante ejecucion.
-  unsigned long now = millis();                                                       // Variable now: estado mutable de now.
-  if (now - tWifiCheck < 1000) return;                                                // Condicion: valida estado de hardware o comando.
-  tWifiCheck = now;                                                                   // Asignacion: actualiza estado del firmware.
-
-  if (WiFi.status() == WL_CONNECTED) {                                                // Condicion: valida estado de hardware o comando.
-    if (!wifiUp) {                                                                    // Condicion: valida estado de hardware o comando.
-      wifiUp = true;                                                                  // Asignacion: actualiza estado del firmware.
-      announceWifiUp();                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-      if (MDNS.begin(MDNS_HOST)) {                                                    // Condicion: valida estado de hardware o comando.
-        MDNS.addService("vesta", "tcp", WS_PORT);                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-        MDNS.addService("ws", "tcp", WS_PORT);                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-      }
-      startWebSocketServer();                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-    return;                                                                           // Retorno: informa resultado de la operacion.
+// Funcion       | requestServoArm: inicia el armado seguro tras comando serial.
+void requestServoArm() {
+  if (!pcaOnline) {
+    Serial.println("Armado rechazado: PCA9685 no responde.");
+    return;
   }
-
-  wifiUp = false;                                                                     // Asignacion: actualiza estado del firmware.
-  if (!s3ApActive) {                                                                  // Condicion: valida estado de hardware o comando.
-    startBatteryAccessPoint();                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-    startWebSocketServer();                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-  // Use non-destructive reconnect() instead of disconnect()+begin(). The latter
-  // wipes the association every cycle and was making the link flap. With
-  // setAutoReconnect(true) the stack already retries; we only nudge it after
-  // ~5s without a successful association.
-  //
-  // Importante: NO llamar a reconnect() mientras el stack todavia esta en
-  // pleno intento de conexion (WL_IDLE_STATUS / WL_DISCONNECTED transitorio).
-  // Si lo hacemos, esp_wifi_connect() devuelve ESP_ERR_WIFI_CONN y ESP-IDF
-  // imprime "wifi:sta is connecting, return error" en el UART, ensuciando
-  // el canal serial JSON. Solo empujamos cuando el intento previo terminado
-  // en fallo definitivo (FAILED / NO_SSID / CONNECTION_LOST).
-  wl_status_t st = WiFi.status();
-  bool intentoFallido = (st == WL_CONNECT_FAILED ||                                   // Variable intentoFallido: estado mutable de intento fallido.
-                         st == WL_NO_SSID_AVAIL ||                                    // Asignacion: actualiza estado del firmware.
-                         st == WL_CONNECTION_LOST);                                   // Asignacion: actualiza estado del firmware.
-  if (intentoFallido && now - tWifiRetry > WIFI_RECONNECT_INTERVAL_MS) {              // Condicion: valida estado de hardware o comando.
-    tWifiRetry = now;                                                                 // Asignacion: actualiza estado del firmware.
-    Serial.println("[WiFi] Nudging reconnect...");                                    // Llamada: ejecuta API de hardware, red o utilidad local.
-    WiFi.reconnect();                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
+  releaseControlledServos();
+  servosArmed = false;
+  servoArmPending = true;
+  servoArmStartMs = millis();
+  Serial.println("Armado solicitado: estabilizando sensores antes de activar PWM.");
 }
 
-bool setupMpu(uint8_t idx) {                                                          // Funcion setupMpu: inicializa y valida una MPU6050.
-  for (int attempt = 1; attempt <= 3; attempt++) {                                    // Bucle: recorre muestras, servos o clientes.
-    if (!tcaSel(IMU_TCA_CHANNEL[idx])) {                                              // Condicion: valida estado de hardware o comando.
-      tcaOff();                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-      delay(40);                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-      continue;
-    }
-
-    bool present = i2cPing(MPU_ADDR);                                                 // Variable present: estado mutable de present.
-    if (present) {                                                                    // Condicion: valida estado de hardware o comando.
-      imu[idx].reset();
-      delay(100);                                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
-      imu[idx].initialize();
-      imu[idx].setClockSource(MPU6050_CLOCK_PLL_XGYRO);
-      imu[idx].setSleepEnabled(false);
-      imu[idx].setFullScaleAccelRange(MPU6050_ACCEL_FS_2);
-      imu[idx].setFullScaleGyroRange(MPU6050_GYRO_FS_250);
-      imu[idx].setDLPFMode(MPU6050_DLPF_BW_42);
-      delay(30);                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-      present = imu[idx].testConnection();                                            // Asignacion: actualiza estado del firmware.
-    }
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-
-    if (present) {                                                                    // Condicion: valida estado de hardware o comando.
-      int16_t ax, ay, az, gx, gy, gz;
-      if (readImuMotion(idx, ax, ay, az, gx, gy, gz)) {                               // Condicion: valida estado de hardware o comando.
-        cf[idx].ready = false;                                                        // Asignacion: actualiza estado del firmware.
-        cf[idx].degReady = false;                                                     // Asignacion: actualiza estado del firmware.
-        Serial.printf("[IMU] bus %d: OK (try %d)\n", idx, attempt);                   // Llamada: ejecuta API de hardware, red o utilidad local.
-        return true;                                                                  // Retorno: informa resultado de la operacion.
-      }
-    }
-    delay(50);                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  imuOnline[idx] = false;                                                             // Asignacion: actualiza estado del firmware.
-  cf[idx].ready = false;                                                              // Asignacion: actualiza estado del firmware.
-  cf[idx].degReady = false;                                                           // Asignacion: actualiza estado del firmware.
-  Serial.printf("[IMU] bus %d: FAIL (expected MPU 0x%02X on TCA ch %d)\n", idx, MPU_ADDR, IMU_TCA_CHANNEL[idx]); // Llamada: ejecuta API de hardware, red o utilidad local.
-  return false;                                                                       // Retorno: informa resultado de la operacion.
+// Funcion       | disarmServos: desarma servos y registra la causa.
+void disarmServos(const char* reason) {
+  servosArmed = false;
+  servoArmPending = false;
+  releaseControlledServos();
+  Serial.print("Servos desarmados: ");
+  Serial.println(reason);
 }
 
-void setupI2CAndHardware() {                                                          // Funcion setupI2CAndHardware: prepara bus I2C, servos y sensores.
-  Wire.begin(PIN_SDA, PIN_SCL);                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.setClock(I2C_CLOCK_HZ);                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  Wire.setTimeOut(20);                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  Serial.printf("[I2C] SDA GPIO%d SCL GPIO%d @ %lu Hz\n", PIN_SDA, PIN_SCL, (unsigned long)I2C_CLOCK_HZ); // Llamada: ejecuta API de hardware, red o utilidad local.
-  if (sensorsEnabled()) {                                                             // Condicion: diagnostica sensores solo si participan en el control.
-    diagnoseI2CBus();                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-    if (!i2cPing(TCA_ADDR)) {                                                         // Condicion: valida estado de hardware o comando.
-      Serial.printf("[I2C] Warning: TCA9548A not found at 0x%02X\n", TCA_ADDR);       // Llamada: ejecuta API de hardware, red o utilidad local.
-    }
-    tcaOff();                                                                         // Llamada: deja libre el bus raiz antes de buscar el PCA9685.
-  } else {
-    Serial.println("[SENSORLESS] Sensor init skipped; manual page controls PCA9685 servos only.");
+// Funcion       | serviceServoArming: completa armado tras tiempo de estabilizacion.
+void serviceServoArming() {
+  if (!servoArmPending) {
+    return;
   }
-  pcaOnline = i2cPing(PCA_ADDR);                                                      // Asignacion: detecta el driver PWM de servos.
-  if (!pcaOnline) {                                                                   // Condicion: alerta si el driver de servos no responde.
-    Serial.printf("[I2C] Warning: PCA9685 not found at 0x%02X. Check VCC, SDA GPIO%d, SCL GPIO%d, OE low and common GND.\n",
-                  PCA_ADDR, PIN_SDA, PIN_SCL);
+  if (millis() - servoArmStartMs < SAFE_ARM_SETTLE_MS) {
+    return;
   }
-
-  pca.begin();                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  pca.setPWMFreq(PWM_FREQ);                                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  delay(10);                                                                          // Llamada: ejecuta API de hardware, red o utilidad local.
-
-  for (int i = 0; i < N_SERVOS; i++) {                                                // Bucle: recorre muestras, servos o clientes.
-    currentDeg[i] = servoCfg[i].homeDeg;                                              // Asignacion: actualiza estado del firmware.
-    targetDeg[i] = servoCfg[i].homeDeg;                                               // Asignacion: actualiza estado del firmware.
+  servoArmPending = false;
+  if (!pcaOnline) {
+    Serial.println("Armado cancelado: PCA9685 no responde.");
+    return;
   }
-  initializeServosSafely();                                                           // Llamada: arranca sin mover ni energizar servos.
+  servosArmed = true;
+  Serial.println("Servos ARMADOS: PWM habilitado siguiendo la postura actual de sensores.");
+}
 
-  if (sensorsEnabled()) {                                                             // Condicion: prepara IMU/AS5600 solo fuera de la prueba manual.
-    bool imuOk = true;                                                                // Variable imuOk: estado mutable de lectura de sensores IMU/I2C.
-    for (int i = 0; i < NUM_IMUS; i++) {                                              // Bucle: recorre muestras, servos o clientes.
-      bool ok = setupMpu(i);                                                          // Variable ok: estado mutable de ok.
-      if (!ok) imuOk = false;                                                         // Condicion: valida estado de hardware o comando.
-    }
-    tcaOff();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    if (!imuOk) Serial.println("[IMU] Warning: at least one MPU6050 did not respond."); // Condicion: valida estado de hardware o comando.
+// Resumen PASS/FALLO de la verificacion de subida.
+// Funcion       | printBootSummary: resume estado de sensores, PCA y seguridad al arrancar.
+void printBootSummary() {
+  byte mpuOk = 0;
+  byte buttonOk = 0;
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    if (mpuReady[i]) mpuOk++;
+  }
+  for (byte i = 0; i < BUTTON_COUNT; i++) {
+    if (buttonReady[i]) buttonOk++;
+  }
+  bool tcaOk = deviceFound(TCA9548A_ADDR);
+  Serial.println("=== Resumen de verificacion de subida ===");
+  Serial.print("Firmware: ");
+  Serial.println(FW_VERSION);
+  Serial.print("PCA9685: ");
+  Serial.println(pcaOnline ? "OK" : "FALLO");
+  Serial.print("TCA9548A: ");
+  Serial.println(tcaOk ? "OK" : "FALLO");
+  Serial.print("MPU6050: ");
+  Serial.print(mpuOk);
+  Serial.print("/");
+  Serial.print(MPU_COUNT);
+  Serial.println(mpuOk == MPU_COUNT ? " OK" : " (revisar fallidos)");
+  Serial.print("Botones N.A.: ");
+  Serial.print(buttonOk);
+  Serial.print("/");
+  Serial.print(BUTTON_COUNT);
+  Serial.println(buttonOk == BUTTON_COUNT ? " OK" : " (revisar GPIO/GND)");
+  bool allOk = pcaOnline && tcaOk && mpuOk == MPU_COUNT && buttonOk == BUTTON_COUNT;
+  Serial.println(allOk ? ">> VERIFICACION OK: sensores listos, servos desarmados." : ">> VERIFICACION CON ADVERTENCIAS: revisar conexiones antes de armar.");
+  Serial.println("==========================================");
+}
 
-    for (int i = 0; i < NUM_AS5600; i++) {                                            // Bucle: recorre muestras, servos o clientes.
-      int raw = 0;                                                                    // Variable raw: estado mutable de raw.
-      if (readAs5600Raw(i, raw)) {                                                    // Condicion: valida estado de hardware o comando.
-        as5600Raw[i] = raw;                                                           // Asignacion: actualiza estado del firmware.
-        as5600Ema[i] = raw;                                                           // Asignacion: actualiza estado del firmware.
-        as5600BaseRaw[i] = raw;                                                       // Asignacion: actualiza estado del firmware.
-        as5600EmaReady[i] = true;                                                     // Asignacion: actualiza estado del firmware.
-        as5600BaseReady[i] = true;                                                    // Asignacion: actualiza estado del firmware.
-        as5600Online[i] = true;                                                       // Asignacion: actualiza estado del firmware.
-        as5600Faults[i] = 0;                                                          // Asignacion: actualiza estado del firmware.
-        Serial.printf("[AS5600] sensor %d TCA%d raw %d\n", i, AS5600_TCA_CHANNEL[i], raw); // Llamada: ejecuta API de hardware, red o utilidad local.
-      } else {
-        as5600Online[i] = false;                                                      // Asignacion: actualiza estado del firmware.
-        as5600Faults[i] = AS5600_FAIL_LIMIT;                                          // Asignacion: actualiza estado del firmware.
-        Serial.printf("[AS5600] sensor %d FAIL (expected 0x%02X on TCA ch %d)\n", i, AS5600_ADDR, AS5600_TCA_CHANNEL[i]); // Llamada: ejecuta API de hardware, red o utilidad local.
+// Re-deteccion en loop: reintenta inicializar sensores que estan offline.
+// Funcion       | recheckOfflineSensors: reintenta detectar sensores marcados offline.
+void recheckOfflineSensors() {
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    if (!mpuReady[i]) {
+      setupMpu(i);
+      if (mpuReady[i]) {
+        Serial.print("MPU6050 ");
+        Serial.print(i + 1);
+        Serial.println(" recuperado.");
       }
     }
   }
+  tcaDisableAll();
 }
 
-// Hook que descarta CUALQUIER salida del sistema de log de ESP-IDF.
-// Nuestro protocolo serial es JSON: cualquier "E (1234) wifi:..." que
-// emita el IDF rompe el parser del PC ("RX no JSON"). Nuestros propios
-// Serial.printf / Serial.println van por Print y NO pasan por este hook,
-// asi que se siguen viendo normales.
-int vesta_drop_idf_logs(const char* fmt, va_list args) {                              // Funcion vesta_drop_idf_logs: encapsula la logica de vesta drop idf logs.
-  (void)fmt; (void)args;
-  return 0;                                                                           // Retorno: informa resultado de la operacion.
-}
-
-void setup() {                                                                        // Funcion setup: rutina de inicializacion principal.
-  Serial.begin(115200);                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  delay(150);                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-  // Doble defensa contra logs ruidosos del IDF que contaminan el JSON serial:
-  //  1) Bajar el nivel de log del componente wifi (por compatibilidad).
-  //  2) Reemplazar el vprintf global para descartar TODO lo que el IDF
-  //     intente escribir, incluyendo errores que evitan el filtro por tag
-  //     (p.ej. "wifi:sta is connecting, return error" en algunas builds).
-  esp_log_level_set("*", ESP_LOG_NONE);                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  esp_log_set_vprintf(vesta_drop_idf_logs);                                           // Llamada: ejecuta API de hardware, red o utilidad local.
-  Serial.println("\nV.E.S.T.A. ESP32-S3 controller v3.3");                            // Llamada: ejecuta API de hardware, red o utilidad local.
-
-  // Boton fisico de paro de emergencia retirado: ya no se configura PIN_ESTOP.
-  loadPrefs();                                                                        // Llamada: ejecuta API de hardware, red o utilidad local.
-  applyBootBehavior();                                                                // Llamada: ejecuta API de hardware, red o utilidad local.
-  setupI2CAndHardware();                                                              // Llamada: ejecuta API de hardware, red o utilidad local.
-
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-  setupBle();                                                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
-
-  connectWifi();                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-
-  if (WiFi.status() == WL_CONNECTED && MDNS.begin(MDNS_HOST)) {                       // Condicion: valida estado de hardware o comando.
-    MDNS.addService("vesta", "tcp", WS_PORT);                                         // Llamada: ejecuta API de hardware, red o utilidad local.
-    MDNS.addService("ws", "tcp", WS_PORT);                                            // Llamada: ejecuta API de hardware, red o utilidad local.
-    Serial.printf("[mDNS] %s.local\n", MDNS_HOST);                                    // Llamada: ejecuta API de hardware, red o utilidad local.
+// Funcion       | setup: prepara serial, bus I2C, sensores y servos.
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.print("Firmware ");
+  Serial.println(FW_VERSION);
+  Serial.println("Iniciando PCA9685 con ESP32...");
+  Serial.print("SDA: GPIO ");
+  Serial.println(I2C_SDA);
+  Serial.print("SCL: GPIO ");
+  Serial.println(I2C_SCL);
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(100000);
+  bootI2CDiagnostic();
+  if (deviceFound(PCA9685_ADDR)) {
+    pcaOnline = true;
+    Serial.println("PCA9685 detectado en direccion 0x40.");
+  } else {
+    pcaOnline = false;
+    Serial.println("ERROR: No se detecta el PCA9685 en direccion 0x40.");
+    Serial.println("Revisa SDA, SCL, VCC, GND y que la direccion sea 0x40.");
   }
-
-  startWebSocketServer();                                                             // Llamada: ejecuta API de hardware, red o utilidad local.
+  pca.begin();
+  pca.setPWMFreq(50);
+  initializeServosSafely();
+  setupMpus();
+  setupButtons();
+  calibrateMpuZeros();
+  primeServoFilters();
+  printBootSummary();
+  delay(500);
+}
+// Envia una linea JSON de identidad que la pagina tecnica reconoce como
+// controlador ESP32-S3 valido (campos "role":"controller" / "type").
+// Esto es lo que permite que "Detectar" encuentre la placa en cualquier
+// momento, no solo en el instante posterior a subir el firmware.
+// Funcion       | sendIdentity: envia balizas seriales para descubrimiento automatico.
+void sendIdentity(const char* type) {
+  Serial.print("{\"role\":\"controller\",\"type\":\"");
+  Serial.print(type);
+  Serial.print("\",\"fw\":\"");
+  Serial.print(FW_VERSION);
+  Serial.print("\",\"pca\":");
+  Serial.print(pcaOnline ? "true" : "false");
+  Serial.print(",\"armed\":");
+  Serial.print(servosArmed ? "true" : "false");
+  Serial.print(",\"armPending\":");
+  Serial.print(servoArmPending ? "true" : "false");
+  Serial.println("}");
 }
 
-void loop() {                                                                         // Funcion loop: ciclo principal de ejecucion.
-  if (wsStarted) ws.loop();                                                           // Condicion: valida estado de hardware o comando.
-  readSerialCommands();                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-  wifiKeepalive();                                                                    // Llamada: ejecuta API de hardware, red o utilidad local.
-#if defined(ESP8266)                                                                  // Directiva de compilacion: activa codigo segun configuracion.
-  MDNS.update();                                                                      // Llamada: ejecuta API de hardware, red o utilidad local.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
+// Funcion       | printJsonBool: imprime booleanos validos para JSON.
+void printJsonBool(bool value) {
+  Serial.print(value ? "true" : "false");
+}
 
-  // Boton fisico de paro de emergencia retirado: el paro/reset es solo remoto
-  // (cmd_stop / cmd_reset por WS/BLE/Serial).
+// Funcion       | printButtonTelemetryDetail: imprime estado de un boton fisico.
+void printButtonTelemetryDetail(byte index) {
+  Serial.print("{\"pin\":");
+  Serial.print(BUTTON_PINS[index]);
+  Serial.print(",\"pressed\":");
+  printJsonBool(buttonPressed[index]);
+  Serial.print(",\"direction\":");
+  Serial.print(BUTTON_DIRECTIONS[index]);
+  Serial.print(",\"limitDeg\":");
+  Serial.print(BUTTON_DIRECTIONS[index] > 0 ? BUTTON_PRESSED_ANGLE : BUTTON_OPEN_ANGLE);
+  Serial.print("}");
+}
 
-  if (camOnline && millis() - lastCamMs > CAM_TIMEOUT_MS) camOnline = false;          // Condicion: valida estado de hardware o comando.
+// Funcion       | printMpuServoTelemetry: imprime un servo enlazado a MPU en el formato de la pagina.
+void printMpuServoTelemetry(byte index, bool first) {
+  if (!first) {
+    Serial.print(",");
+  }
+  int angle = lastMpuServoAngles[index];
+  Serial.print("{\"id\":");
+  Serial.print(CONTROLLED_SERVO_IDS[index]);
+  Serial.print(",\"channel\":");
+  Serial.print(CONTROLLED_SERVO_CHANNELS[index]);
+  Serial.print(",\"angle\":");
+  Serial.print(angle);
+  Serial.print(",\"target\":");
+  Serial.print(angle);
+  Serial.print(",\"pwm\":");
+  Serial.print(angleToPwmTicks(angle));
+  Serial.print(",\"sensor\":");
+  Serial.print(lastMpuTiltDeg[index], 1);
+  Serial.print(",\"sensorKind\":\"imu\",\"sensorId\":");
+  Serial.print(index);
+  Serial.print(",\"sensorSource\":\"MPU ");
+  Serial.print(index + 1);
+  Serial.print(" TCA");
+  Serial.print(TCA_CHANNELS[index]);
+  Serial.print("\",\"raw\":");
+  Serial.print(lastMpuTiltDeg[index], 1);
+  Serial.print(",\"neutral\":0,\"online\":");
+  printJsonBool(mpuReady[index]);
+  Serial.print(",\"faults\":");
+  Serial.print(mpuFaults[index]);
+  Serial.print(",\"moving\":");
+  printJsonBool(servosArmed);
+  Serial.print(",\"amp\":0,\"temp\":0}");
+}
 
-  unsigned long now = millis();                                                       // Variable now: estado mutable de now.
-  if (now - tCtrl >= CTRL_MS) {                                                       // Condicion: valida estado de hardware o comando.
-    tCtrl = now;                                                                      // Asignacion: actualiza estado del firmware.
-    if (sensorsEnabled()) {                                                           // Condicion: en modo manual sin sensores deja intactos los targets de la pagina.
-      readAllSensors();                                                               // Llamada: ejecuta API de hardware, red o utilidad local.
-      updateTargetsFromSensors();                                                     // Llamada: ejecuta API de hardware, red o utilidad local.
+// Funcion       | printButtonServoTelemetry: imprime un codo controlado por dos botones N.A.
+void printButtonServoTelemetry(byte elbow, bool first) {
+  if (!first) {
+    Serial.print(",");
+  }
+  byte firstButton = elbow == 0 ? 0 : 2;
+  byte secondButton = firstButton + 1;
+  bool pressed = buttonPressed[firstButton] || buttonPressed[secondButton];
+  bool online = buttonReady[firstButton] || buttonReady[secondButton];
+  int angle = constrain(buttonServoAngles[elbow], BUTTON_OPEN_ANGLE, BUTTON_PRESSED_ANGLE);
+  Serial.print("{\"id\":");
+  Serial.print(BUTTON_SERVO_IDS[elbow]);
+  Serial.print(",\"channel\":");
+  Serial.print(BUTTON_SERVO_CHANNELS[elbow]);
+  Serial.print(",\"angle\":");
+  Serial.print(angle);
+  Serial.print(",\"target\":");
+  Serial.print(angle);
+  Serial.print(",\"pwm\":");
+  Serial.print(angleToPwmTicks(angle));
+  Serial.print(",\"sensor\":");
+  Serial.print(angle);
+  Serial.print(",\"sensorKind\":\"button\",\"sensorId\":");
+  Serial.print(firstButton);
+  Serial.print(",\"sensorSource\":\"Botones codo ");
+  Serial.print(elbow == 0 ? "izquierdo" : "derecho");
+  Serial.print("\",\"raw\":");
+  Serial.print(pressed ? 1 : 0);
+  Serial.print(",\"pressed\":");
+  printJsonBool(pressed);
+  Serial.print(",\"pin\":");
+  Serial.print(BUTTON_PINS[firstButton]);
+  Serial.print(",\"openDeg\":");
+  Serial.print(BUTTON_OPEN_ANGLE);
+  Serial.print(",\"pressedDeg\":");
+  Serial.print(BUTTON_PRESSED_ANGLE);
+  Serial.print(",\"online\":");
+  printJsonBool(online);
+  Serial.print(",\"faults\":0,\"buttons\":[");
+  printButtonTelemetryDetail(firstButton);
+  Serial.print(",");
+  printButtonTelemetryDetail(secondButton);
+  Serial.print("],\"moving\":");
+  printJsonBool(servosArmed && pressed);
+  Serial.print(",\"amp\":0,\"temp\":0}");
+}
+
+// Funcion       | sendSensorTelemetry: manda lecturas en vivo en JSON para la pagina tecnica.
+void sendSensorTelemetry() {
+  Serial.print("{\"role\":\"controller\",\"type\":\"sensors\",\"fw\":\"");
+  Serial.print(FW_VERSION);
+  Serial.print("\",\"t\":");
+  Serial.print(millis());
+  Serial.print(",\"mode\":\"manual\",\"emergency\":false,\"estop\":false,\"armed\":");
+  printJsonBool(servosArmed);
+  Serial.print(",\"pcaOnline\":");
+  printJsonBool(pcaOnline);
+  Serial.print(",\"sensorless\":false,\"servos\":[");
+  printMpuServoTelemetry(0, true);
+  printMpuServoTelemetry(1, false);
+  printButtonServoTelemetry(0, false);
+  printMpuServoTelemetry(2, false);
+  printMpuServoTelemetry(3, false);
+  printButtonServoTelemetry(1, false);
+  Serial.println("]}");
+}
+
+// Lee comandos que envia la pagina tecnica por Serial. La deteccion manda
+// {"type":"cmd_status"}; respondemos de inmediato con la identidad para que
+// el descubrimiento sea rapido y fiable.
+// Funcion       | handleSerialCommands: procesa comandos de armado, paro e identidad.
+void handleSerialCommands() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialCmdBuffer.length() > 0) {
+        String cmd = serialCmdBuffer;
+        cmd.toLowerCase();
+        if (cmd.indexOf("cmd_disarm") >= 0 ||
+            cmd.indexOf("cmd_stop") >= 0 ||
+            cmd.indexOf("cmd_reset") >= 0 ||
+            cmd.indexOf("disable_servos") >= 0 ||
+            cmd.indexOf("desarmar") >= 0) {
+          disarmServos("comando remoto");
+          sendIdentity("ack");
+          lastIdentityMs = millis();
+        } else if (cmd.indexOf("cmd_arm") >= 0 ||
+                   cmd.indexOf("arm_servos") >= 0 ||
+                   cmd.indexOf("enable_servos") >= 0 ||
+                   cmd.indexOf("armar") >= 0) {
+          requestServoArm();
+          sendIdentity("ack");
+          lastIdentityMs = millis();
+        } else if (cmd.indexOf("cmd_calibrate") >= 0 ||
+                   cmd.indexOf("calibrate") >= 0 ||
+                   cmd.indexOf("calibrar") >= 0) {
+          bool wasArmed = servosArmed;
+          disarmServos("calibracion neutral");
+          calibrateMpuZeros();
+          if (wasArmed) {
+            requestServoArm();
+          }
+          sendIdentity("ack");
+          lastIdentityMs = millis();
+        } else if (cmd.indexOf("cmd_status") >= 0 ||
+                   cmd.indexOf("status") >= 0 ||
+                   cmd.indexOf("ping") >= 0) {
+          sendIdentity("ack");
+          lastIdentityMs = millis();
+        }
+        serialCmdBuffer = "";
+      }
+    } else if (serialCmdBuffer.length() < 200) {
+      serialCmdBuffer += c;
     }
-    updateServos();                                                                   // Llamada: ejecuta API de hardware, red o utilidad local.
   }
-
-  if (now - tSend >= SEND_MS) {                                                       // Condicion: valida estado de hardware o comando.
-    tSend = now;                                                                      // Asignacion: actualiza estado del firmware.
-    sendData();                                                                       // Llamada: ejecuta API de hardware, red o utilidad local.
-  }
-
-  // Diagnostico de AS5600 por Serial cada 1 s, solo si no hay clientes WS.
-  // Esto sirve para depurar al bench cuando el usuario tiene unicamente el
-  // monitor serial abierto. Con la app conectada se ve por la UI.
-  if (now - tAs5600Diag >= 1000) {                                                    // Condicion: valida estado de hardware o comando.
-    tAs5600Diag = now;                                                                // Asignacion: actualiza estado del firmware.
-    if (sensorsEnabled() && ws.connectedClients(false) == 0) printAs5600Diag();        // Condicion: valida estado de hardware o comando.
-  }
-
-#if BLE_ENABLED                                                                       // Directiva de compilacion: activa codigo segun configuracion.
-  sendBleTelemetry();                                                                 // Llamada: ejecuta API de hardware, red o utilidad local.
-#endif                                                                                // Cierre de directiva de compilacion condicional.
 }
+
+// Funcion       | loop: atiende comandos, sensores y actualizacion periodica de servos.
+void loop() {
+  // Atiende la deteccion/handshake de la pagina tecnica en cada vuelta.
+  handleSerialCommands();
+  if (millis() - lastIdentityMs >= IDENTITY_INTERVAL_MS) {
+    lastIdentityMs = millis();
+    sendIdentity("status");
+  }
+  bool showStatus = millis() - lastStatusMs >= STATUS_INTERVAL_MS;
+  for (byte i = 0; i < MPU_COUNT; i++) {
+    updateServoFromMpu(i, showStatus);
+  }
+  for (byte i = 0; i < BUTTON_COUNT; i++) {
+    updateServoFromButton(i, showStatus);
+  }
+  serviceServoArming();
+  if (millis() - lastTelemetryMs >= TELEMETRY_INTERVAL_MS) {
+    lastTelemetryMs = millis();
+    sendSensorTelemetry();
+  }
+  if (showStatus) {
+    lastStatusMs = millis();
+  }
+  // Agregado: re-detecta periodicamente cualquier sensor que se haya caido.
+  if (millis() - lastSensorRecheckMs >= SENSOR_RECHECK_INTERVAL_MS) {
+    lastSensorRecheckMs = millis();
+    recheckOfflineSensors();
+  }
+  delay(LOOP_DELAY_MS);
+}
+
 `,
     // Campo cam: firmware ESP32-CAM incluido como texto sin procesar.
     cam: String.raw`/*
@@ -2687,7 +1747,7 @@ void loop()
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       id: 0,                                                                          // Campo id: campo de datos para id.
       key: "leftLateral",                                                             // Campo key: campo de datos para key.
-      channel: 0,                                                                     // Campo channel: campo de datos para channel.
+      channel: 10,                                                                    // Campo channel: canal fisico PCA9685 (reubicado 10-15).
       label: "Hombro izq lateral",                                                    // Campo label: campo de datos para label.
       short: "L.LAT",                                                                 // Campo short: campo de datos para short.
       side: "left",                                                                   // Campo side: campo de datos para side.
@@ -2712,7 +1772,7 @@ void loop()
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       id: 1,                                                                          // Campo id: campo de datos para id.
       key: "leftFrontal",                                                             // Campo key: campo de datos para key.
-      channel: 1,                                                                     // Campo channel: campo de datos para channel.
+      channel: 11,                                                                    // Campo channel: canal fisico PCA9685 (reubicado 10-15).
       label: "Hombro izq frontal",                                                    // Campo label: campo de datos para label.
       short: "L.FRO",                                                                 // Campo short: campo de datos para short.
       side: "left",                                                                   // Campo side: campo de datos para side.
@@ -2737,13 +1797,13 @@ void loop()
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       id: 2,                                                                          // Campo id: campo de datos para id.
       key: "leftElbow",                                                               // Campo key: campo de datos para key.
-      channel: 2,                                                                     // Campo channel: campo de datos para channel.
+      channel: 12,                                                                    // Campo channel: canal fisico PCA9685 (reubicado 10-15).
       label: "Codo izquierdo",                                                        // Campo label: campo de datos para label.
       short: "L.ELB",                                                                 // Campo short: campo de datos para short.
       side: "left",                                                                   // Campo side: campo de datos para side.
       movement: "Flexion de codo",                                                    // Campo movement: campo de datos para movement.
-      sensorKey: "as5600LeftElbow",                                                   // Campo sensorKey: campo de datos para sensor key.
-      sensorLabel: "AS5600 TCA4",                                                     // Campo sensorLabel: campo de datos para sensor label.
+      sensorKey: "buttonLeftElbow",                                                   // Campo sensorKey: campo de datos para sensor key.
+      sensorLabel: "Botones N.A. GPIO4/GPIO5",                                        // Campo sensorLabel: campo de datos para sensor label.
       minAngle: 0,                                                                    // Campo minAngle: campo de datos para control angular de servos.
       maxAngle: 90,                                                                   // Campo maxAngle: campo de datos para control angular de servos.
       homeAngle: 0,                                                                   // Campo homeAngle: campo de datos para control angular de servos.
@@ -2762,7 +1822,7 @@ void loop()
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       id: 3,                                                                          // Campo id: campo de datos para id.
       key: "rightLateral",                                                            // Campo key: campo de datos para key.
-      channel: 3,                                                                     // Campo channel: campo de datos para channel.
+      channel: 13,                                                                    // Campo channel: canal fisico PCA9685 (reubicado 10-15).
       label: "Hombro der lateral",                                                    // Campo label: campo de datos para label.
       short: "R.LAT",                                                                 // Campo short: campo de datos para short.
       side: "right",                                                                  // Campo side: campo de datos para side.
@@ -2787,7 +1847,7 @@ void loop()
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       id: 4,                                                                          // Campo id: campo de datos para id.
       key: "rightFrontal",                                                            // Campo key: campo de datos para key.
-      channel: 4,                                                                     // Campo channel: campo de datos para channel.
+      channel: 14,                                                                    // Campo channel: canal fisico PCA9685 (reubicado 10-15).
       label: "Hombro der frontal",                                                    // Campo label: campo de datos para label.
       short: "R.FRO",                                                                 // Campo short: campo de datos para short.
       side: "right",                                                                  // Campo side: campo de datos para side.
@@ -2812,13 +1872,13 @@ void loop()
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       id: 5,                                                                          // Campo id: campo de datos para id.
       key: "rightElbow",                                                              // Campo key: campo de datos para key.
-      channel: 5,                                                                     // Campo channel: campo de datos para channel.
+      channel: 15,                                                                    // Campo channel: canal fisico PCA9685 (reubicado 10-15).
       label: "Codo derecho",                                                          // Campo label: campo de datos para label.
       short: "R.ELB",                                                                 // Campo short: campo de datos para short.
       side: "right",                                                                  // Campo side: campo de datos para side.
       movement: "Flexion de codo",                                                    // Campo movement: campo de datos para movement.
-      sensorKey: "as5600RightElbow",                                                  // Campo sensorKey: campo de datos para sensor key.
-      sensorLabel: "AS5600 TCA5",                                                     // Campo sensorLabel: campo de datos para sensor label.
+      sensorKey: "buttonRightElbow",                                                  // Campo sensorKey: campo de datos para sensor key.
+      sensorLabel: "Botones N.A. GPIO6/GPIO7",                                        // Campo sensorLabel: campo de datos para sensor label.
       minAngle: 0,                                                                    // Campo minAngle: campo de datos para control angular de servos.
       maxAngle: 90,                                                                   // Campo maxAngle: campo de datos para control angular de servos.
       homeAngle: 0,                                                                   // Campo homeAngle: campo de datos para control angular de servos.
@@ -2895,30 +1955,56 @@ void loop()
     }
   ];
 
-  const AS5600_DEFAULTS = [                                                           // Arreglo AS5600_DEFAULTS: catalogo base de sensores AS5600 y su calibracion.
+  const BUTTON_DEFAULTS = [                                                           // Arreglo BUTTON_DEFAULTS: catalogo base de botones N.A. de codo.
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
-      key: "as5600LeftElbow",                                                         // Campo key: campo de datos para key.
-      channel: 4,                                                                     // Campo channel: canal TCA9548A del AS5600.
+      key: "buttonLeftElbow",                                                         // Campo key: campo de datos para key.
+      pin: 4,                                                                         // Campo pin: GPIO del boton N.A.
       servoId: 2,                                                                     // Campo servoId: campo de datos para control angular de servos.
-      label: "Codo izquierdo",                                                        // Campo label: campo de datos para label.
-      raw0: 0,                                                                        // Campo raw0: lectura AS5600 para 0 grados.
-      raw90: 1024,                                                                    // Campo raw90: lectura AS5600 para 90 grados.
-      neutralDeg: 0,                                                                  // Campo neutralDeg: campo de datos para control angular de servos.
+      label: "Codo izquierdo +",                                                      // Campo label: campo de datos para label.
+      direction: 1,                                                                   // Campo direction: + sube hacia 90.
+      openDeg: 0,                                                                     // Campo openDeg: angulo inicial del boton.
+      pressedDeg: 90,                                                                 // Campo pressedDeg: limite de avance con boton presionado.
       invert: false,                                                                  // Campo invert: campo de datos para invert.
-      liveRaw: 0,                                                                     // Campo liveRaw: campo de datos para live raw.
+      livePressed: false,                                                             // Campo livePressed: estado vivo del boton.
       liveDeg: 0,                                                                     // Campo liveDeg: campo de datos para control angular de servos.
       liveSpeed: 0                                                                    // Campo liveSpeed: campo de datos para live speed.
     },
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
-      key: "as5600RightElbow",                                                        // Campo key: campo de datos para key.
-      channel: 5,                                                                     // Campo channel: canal TCA9548A del AS5600.
-      servoId: 5,                                                                     // Campo servoId: campo de datos para control angular de servos.
-      label: "Codo derecho",                                                          // Campo label: campo de datos para label.
-      raw0: 0,                                                                        // Campo raw0: lectura AS5600 para 0 grados.
-      raw90: 1024,                                                                    // Campo raw90: lectura AS5600 para 90 grados.
-      neutralDeg: 0,                                                                  // Campo neutralDeg: campo de datos para control angular de servos.
+      key: "buttonLeftElbowDown",                                                     // Campo key: campo de datos para key.
+      pin: 5,                                                                         // Campo pin: GPIO del boton N.A.
+      servoId: 2,                                                                     // Campo servoId: campo de datos para control angular de servos.
+      label: "Codo izquierdo -",                                                      // Campo label: campo de datos para label.
+      direction: -1,                                                                  // Campo direction: - baja hacia 0.
+      openDeg: 0,                                                                     // Campo openDeg: angulo inicial del boton.
+      pressedDeg: 0,                                                                  // Campo pressedDeg: limite de retroceso.
       invert: false,                                                                  // Campo invert: campo de datos para invert.
-      liveRaw: 0,                                                                     // Campo liveRaw: campo de datos para live raw.
+      livePressed: false,                                                             // Campo livePressed: estado vivo del boton.
+      liveDeg: 0,                                                                     // Campo liveDeg: campo de datos para control angular de servos.
+      liveSpeed: 0                                                                    // Campo liveSpeed: campo de datos para live speed.
+    },
+    {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
+      key: "buttonRightElbow",                                                        // Campo key: campo de datos para key.
+      pin: 6,                                                                         // Campo pin: GPIO del boton N.A.
+      servoId: 5,                                                                     // Campo servoId: campo de datos para control angular de servos.
+      label: "Codo derecho +",                                                        // Campo label: campo de datos para label.
+      direction: 1,                                                                   // Campo direction: + sube hacia 90.
+      openDeg: 0,                                                                     // Campo openDeg: angulo inicial del boton.
+      pressedDeg: 90,                                                                 // Campo pressedDeg: limite de avance con boton presionado.
+      invert: false,                                                                  // Campo invert: campo de datos para invert.
+      livePressed: false,                                                             // Campo livePressed: estado vivo del boton.
+      liveDeg: 0,                                                                     // Campo liveDeg: campo de datos para control angular de servos.
+      liveSpeed: 0                                                                    // Campo liveSpeed: campo de datos para live speed.
+    },
+    {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
+      key: "buttonRightElbowDown",                                                    // Campo key: campo de datos para key.
+      pin: 7,                                                                         // Campo pin: GPIO del boton N.A.
+      servoId: 5,                                                                     // Campo servoId: campo de datos para control angular de servos.
+      label: "Codo derecho -",                                                        // Campo label: campo de datos para label.
+      direction: -1,                                                                  // Campo direction: - baja hacia 0.
+      openDeg: 0,                                                                     // Campo openDeg: angulo inicial del boton.
+      pressedDeg: 0,                                                                  // Campo pressedDeg: limite de retroceso.
+      invert: false,                                                                  // Campo invert: campo de datos para invert.
+      livePressed: false,                                                             // Campo livePressed: estado vivo del boton.
       liveDeg: 0,                                                                     // Campo liveDeg: campo de datos para control angular de servos.
       liveSpeed: 0                                                                    // Campo liveSpeed: campo de datos para live speed.
     }
@@ -2928,13 +2014,15 @@ void loop()
     { key: "controller", label: "ESP32-S3 N16R8", detail: "Control" },                // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "camera", label: "ESP32-CAM", detail: "Vision" },                          // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "pca9685", label: "PCA9685 0x40", detail: "Servos" },                      // Elemento: entrada de objeto dentro de una lista de datos.
-    { key: "tca9548a", label: "TCA9548A 0x70", detail: "IMU + AS5600" },              // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "tca9548a", label: "TCA9548A 0x70", detail: "IMU" },                      // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "imu0", label: "MPU6050 TCA0", detail: "L.LAT" },                          // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "imu1", label: "MPU6050 TCA1", detail: "L.FRO" },                          // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "imu2", label: "MPU6050 TCA2", detail: "R.LAT" },                          // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "imu3", label: "MPU6050 TCA3", detail: "R.FRO" },                          // Elemento: entrada de objeto dentro de una lista de datos.
-    { key: "as5600L", label: "AS5600 TCA4", detail: "L.ELB" },                        // Elemento: entrada de objeto dentro de una lista de datos.
-    { key: "as5600R", label: "AS5600 TCA5", detail: "R.ELB" },                        // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "buttonLUp", label: "Boton + GPIO4", detail: "L.ELB" },                  // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "buttonLDown", label: "Boton - GPIO5", detail: "L.ELB" },                // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "buttonRUp", label: "Boton + GPIO6", detail: "R.ELB" },                  // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "buttonRDown", label: "Boton - GPIO7", detail: "R.ELB" },                // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "servoL", label: "3 servos lado izq", detail: "0-2" },                     // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "servoR", label: "3 servos lado der", detail: "3-5" },                     // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "battery", label: "Bateria y tierra comun", detail: "Poder" }              // Elemento: entrada de objeto dentro de una lista de datos.
@@ -2944,9 +2032,9 @@ void loop()
     { key: "esp32s3",   label: "ESP32-S3 N16R8 (antena externa)",        detail: "x1 - controlador principal" }, // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "esp32cam",  label: "ESP32-CAM con OV2640",                   detail: "x1 - vision auxiliar" }, // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "pca9685",   label: "PCA9685 (16 canales PWM)",               detail: "x1 - driver de servos en 0x40" }, // Elemento: entrada de objeto dentro de una lista de datos.
-    { key: "tca9548a",  label: "TCA9548A (mux I2C)",                     detail: "x1 - aisla los 4 MPU6050 y 2 AS5600 en 0x70" }, // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "tca9548a",  label: "TCA9548A (mux I2C)",                     detail: "x1 - aisla los 4 MPU6050 en 0x70" }, // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "mpu6050",   label: "MPU6050",                                detail: "x4 - hombros lat. y frontal de cada lado" }, // Elemento: entrada de objeto dentro de una lista de datos.
-    { key: "as5600",    label: "AS5600",                                 detail: "x2 - sensores magneticos de codo" }, // Elemento: entrada de objeto dentro de una lista de datos.
+    { key: "buttons",   label: "Botones normalmente abiertos",           detail: "x4 - codos +/-, a GPIO4/GPIO5/GPIO6/GPIO7 con GND comun" }, // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "ds51150",   label: "Servo DS51150 150 kg/cm 270 deg",        detail: "x6 - tres por brazo" }, // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "bat",       label: "Bateria LiPo 3S y BMS",                  detail: "x1 - 11.1 V con proteccion" }, // Elemento: entrada de objeto dentro de una lista de datos.
     { key: "buck",      label: "Convertidor 11.1 V -> 6 V para servos",  detail: "x1 - alta corriente, baja caida" }, // Elemento: entrada de objeto dentro de una lista de datos.
@@ -2975,10 +2063,10 @@ void loop()
       detail: "Hombro izq lateral, hombro izq frontal, hombro der lateral, hombro der frontal. El eje Z apunta perpendicular a la articulacion. Conectalos al TCA9548A en buses 0,1,2,3."
     },
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
-      key: "step-as5600",                                                             // Campo key: campo de datos para key.
-      title: "AS5600 instalados en codos",                                            // Campo title: campo de datos para title.
+      key: "step-buttons",                                                            // Campo key: campo de datos para key.
+      title: "Botones N.A. instalados en codos",                                      // Campo title: campo de datos para title.
       // Campo detail: campo de datos para detail.
-      detail: "Monta un iman diametral en cada eje de codo y alinea el AS5600 frente al iman. Codo izq -> TCA4, codo der -> TCA5, ambos en direccion I2C 0x36."
+      detail: "Cablea cada boton normalmente abierto entre GPIO y GND. Izq + GPIO4, izq - GPIO5, der + GPIO6, der - GPIO7. Los botones + suben y los - bajan de grado en grado."
     },
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       key: "step-pca",                                                                // Campo key: campo de datos para key.
@@ -3083,9 +2171,9 @@ void loop()
       detail: "Cada IMU debe reportar valor finito y dentro de su rango."             // Campo detail: campo de datos para detail.
     },
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
-      key: "as5600-live",                                                             // Campo key: campo de datos para key.
-      label: "Lectura en vivo de los 2 AS5600",                                       // Campo label: campo de datos para label.
-      detail: "Cada AS5600 debe entregar raw I2C 0..4095 dentro del rango calibrado." // Campo detail: campo de datos para detail.
+      key: "buttons-live",                                                            // Campo key: campo de datos para key.
+      label: "Lectura en vivo de los 4 botones N.A.",                                 // Campo label: campo de datos para label.
+      detail: "Cada boton debe alternar estado y reportar el angulo incremental."     // Campo detail: campo de datos para detail.
     },
     {                                                                                 // Elemento: entrada de objeto dentro de una lista de datos.
       key: "estop-trigger",                                                           // Campo key: campo de datos para key.
@@ -3183,7 +2271,7 @@ void loop()
       lastTestRunAt: null,                                                            // Campo lastTestRunAt: campo de datos para diagnostico y pruebas.
       servos: SERVO_DEFAULTS.map((item) => ({ ...item })),                            // Campo servos: campo de datos para control angular de servos.
       imus: IMU_DEFAULTS.map((item) => ({ ...item })),                                // Campo imus: campo de datos para lectura de sensores IMU/I2C.
-      as5600: AS5600_DEFAULTS.map((item) => ({ ...item })),                           // Campo as5600: sensores magneticos de codo.
+      buttons: BUTTON_DEFAULTS.map((item) => ({ ...item })),                          // Campo buttons: botones N.A. de codo.
       tuning: {                                                                       // Campo tuning: objeto anidado de configuracion.
         assistLevel: 0.5,                                                             // Campo assistLevel: campo de datos para assist level.
         deadbandDeg: 2,                                                               // Campo deadbandDeg: campo de datos para control angular de servos.
@@ -3242,6 +2330,43 @@ void loop()
   function hydrateState(fresh, saved) {                                               // Funcion hydrateState: mezcla datos guardados con el estado base actual.
     const byId = (list, id) => list.find((item) => item.id === id);                   // Funcion flecha byId: encapsula la logica de by id.
     const byKey = (list, key) => list.find((item) => item.key === key);               // Funcion flecha byKey: encapsula la logica de by key.
+    const hydrateKnownFlags = (freshFlags, savedFlags = {}) =>                        // Funcion flecha hydrateKnownFlags: descarta claves antiguas de sensores.
+      Object.fromEntries(Object.keys(freshFlags).map((key) => [key, Boolean(savedFlags[key])]));
+    const savedButtons = Array.isArray(saved.buttons) ? saved.buttons : [];                   // Compatibilidad con botones guardados.
+    const legacyButtons = savedButtons.length <= 2;                                   // Constante legacyButtons: perfiles viejos tenian un boton por codo.
+    const buttonByProfile = (item) => {
+      const byExactKey = savedButtons.find((savedItem) => savedItem.key === item.key);
+      if (byExactKey) return byExactKey;
+      const byPin = savedButtons.find((savedItem) => Number(savedItem.pin) === item.pin);
+      if (byPin) return byPin;
+      if (legacyButtons && item.direction > 0) {
+        return savedButtons.find((savedItem) => Number(savedItem.servoId) === item.servoId);
+      }
+      return null;
+    };
+    const hydrateButton = (item) => {                                                 // Funcion flecha hydrateButton: hidrata boton N.A. guardado.
+      const previous = buttonByProfile(item) || {};
+      const openDeg = Number.isFinite(Number(previous.openDeg ?? previous.releasedDeg))
+        ? Number(previous.openDeg ?? previous.releasedDeg)
+        : item.openDeg;
+      const pressedDeg = Number.isFinite(Number(previous.pressedDeg))
+        ? Number(previous.pressedDeg)
+        : item.pressedDeg;
+      const direction = Number(previous.direction) < 0 ? -1 : item.direction;
+      return { ...item, ...previous, key: item.key, pin: item.pin, servoId: item.servoId, label: item.label, direction, openDeg, pressedDeg };
+    };
+    const hydrateServo = (item) => {                                                  // Funcion flecha hydrateServo: conserva enlaces actuales a IMU/botones.
+      const previous = byId(saved.servos || [], item.id) || {};
+      return {
+        ...item,
+        ...previous,
+        id: item.id,
+        key: item.key,
+        channel: item.channel,
+        sensorKey: item.sensorKey,
+        sensorLabel: item.sensorLabel
+      };
+    };
 
     const savedTests = saved.tests || {};                                             // Constante savedTests: constante usada en diagnostico y pruebas.
     const savedBuild = saved.build || {};                                             // Constante savedBuild: constante usada en interfaz tecnica.
@@ -3249,10 +2374,10 @@ void loop()
       ...fresh,
       connection: { ...fresh.connection, ...(saved.connection || {}) },               // Campo connection: objeto anidado de configuracion.
       metadata: { ...fresh.metadata, ...(saved.metadata || {}) },                     // Campo metadata: objeto anidado de configuracion.
-      hardwareChecks: { ...fresh.hardwareChecks, ...(saved.hardwareChecks || {}) },   // Campo hardwareChecks: objeto anidado de configuracion.
+      hardwareChecks: hydrateKnownFlags(fresh.hardwareChecks, saved.hardwareChecks),  // Campo hardwareChecks: objeto anidado de configuracion.
       build: {                                                                        // Campo build: objeto anidado de configuracion.
-        bom: { ...fresh.build.bom, ...(savedBuild.bom || {}) },                       // Campo bom: objeto anidado de configuracion.
-        steps: { ...fresh.build.steps, ...(savedBuild.steps || {}) }                  // Campo steps: objeto anidado de configuracion.
+        bom: hydrateKnownFlags(fresh.build.bom, savedBuild.bom),                      // Campo bom: campo de datos para armado y lista de materiales.
+        steps: hydrateKnownFlags(fresh.build.steps, savedBuild.steps)                 // Campo steps: objeto anidado de configuracion.
       },
       tests: Object.fromEntries(TEST_DEFS.map((item) => {                             // Campo tests: campo de datos para diagnostico y pruebas.
         const previous = savedTests[item.key];                                        // Constante previous: constante usada en previous.
@@ -3263,9 +2388,9 @@ void loop()
       })),
       testRuns: typeof saved.testRuns === "number" ? saved.testRuns : 0,              // Campo testRuns: campo de datos para diagnostico y pruebas.
       lastTestRunAt: saved.lastTestRunAt || null,                                     // Campo lastTestRunAt: campo de datos para diagnostico y pruebas.
-      servos: fresh.servos.map((item) => ({ ...item, ...(byId(saved.servos || [], item.id) || {}) })), // Campo servos: campo de datos para control angular de servos.
+      servos: fresh.servos.map(hydrateServo),                                        // Campo servos: campo de datos para control angular de servos.
       imus: fresh.imus.map((item) => ({ ...item, ...(byKey(saved.imus || [], item.key) || {}) })), // Campo imus: campo de datos para lectura de sensores IMU/I2C.
-      as5600: fresh.as5600.map((item) => ({ ...item, ...(byKey(saved.as5600 || [], item.key) || {}) })), // Campo as5600: sensores magneticos de codo.
+      buttons: fresh.buttons.map(hydrateButton),                                      // Campo buttons: botones N.A. de codo.
       tuning: { ...fresh.tuning, ...(saved.tuning || {}) },                           // Campo tuning: objeto anidado de configuracion.
       firmware: {                                                                     // Campo firmware: objeto anidado de configuracion.
         s3: { ...fresh.firmware.s3, ...((saved.firmware || {}).s3 || {}) },           // Campo s3: objeto anidado de configuracion.
@@ -3738,7 +2863,7 @@ void loop()
         ...servo
       }) => servo),
       imus: state.imus.map(({ liveDeg, liveSpeed, ...imu }) => imu),                  // Campo imus: campo de datos para lectura de sensores IMU/I2C.
-      as5600: state.as5600.map(({ liveRaw, liveDeg, liveSpeed, ...sensor }) => sensor), // Campo as5600: sensores magneticos de codo.
+      buttons: state.buttons.map(({ livePressed, liveDeg, liveSpeed, ...sensor }) => sensor), // Campo buttons: botones N.A. de codo.
       tuning: state.tuning,                                                           // Campo tuning: campo de datos para tuning.
       firmware: Object.fromEntries(Object.entries(state.firmware).map(([key, value]) => [
         key,
@@ -5344,17 +4469,17 @@ void loop()
       // Retorno: entrega el resultado al llamador.
       return `${expectedIds.length} IMUs activos`;
     }
-    if (key === "as5600-live") {                                                      // Condicion: valida estado antes de continuar el flujo.
+    if (key === "buttons-live") {                                                     // Condicion: valida estado antes de continuar el flujo.
       const pkt = await awaitPacket((p) => p && p.type === "sensors" && Array.isArray(p.servos), { timeoutMs: 1800 }); // Constante pkt: constante usada en pkt.
       const issues = [];                                                              // Arreglo issues: arreglo de datos para issues.
-      for (const sensor of state.as5600) {                                            // Bucle: recorre datos o reintenta una operacion controlada.
+      for (const sensor of state.buttons) {                                           // Bucle: recorre datos o reintenta una operacion controlada.
         const live = (pkt.servos || []).find((s) => Number(s.id) === sensor.servoId); // Constante live: constante usada en live.
         const sensorValue = Number(live?.sensor);                                     // Constante sensorValue: lectura reportada por telemetria.
         // Condicion: valida estado antes de continuar el flujo.
         if (!Number.isFinite(sensorValue)) issues.push(`${sensor.label} sin valor`);
       }
       if (issues.length) throw new Error(issues.join(" | "));                         // Condicion: valida estado antes de continuar el flujo.
-      return "2 AS5600 activos";                                                      // Retorno: entrega el resultado al llamador.
+      return "4 botones N.A. activos";                                                // Retorno: entrega el resultado al llamador.
     }
     if (key === "estop-trigger") {                                                    // Condicion: valida estado antes de continuar el flujo.
       sendCommand({ type: "cmd_stop" }, "STOP");                                      // Llamada: ejecuta una accion del modulo actual.
@@ -5385,7 +4510,7 @@ void loop()
 
     const servosOk = state.servos.every((servo) => servo.maxAngle > servo.minAngle && servo.pwmAt0 !== servo.pwmAt270); // Constante servosOk: constante usada en control angular de servos.
     const sensorsOk = state.imus.every((imu) => imu.maxDeg > imu.minDeg) &&           // Constante sensorsOk: constante usada en sensors ok.
-      state.as5600.every((sensor) => sensor.raw0 !== sensor.raw90);                   // Llamada: ejecuta una accion del modulo actual.
+      state.buttons.length === 4 && state.buttons.every((sensor) => Math.abs(Number(sensor.direction)) === 1 && Number.isFinite(Number(sensor.pin))); // Llamada: valida botones fijos.
 
     // Constante testsRun: constante usada en diagnostico y pruebas.
     const testsRun = TEST_DEFS.filter((item) => state.tests[item.key]?.status === "pass" || state.tests[item.key]?.status === "fail").length;
@@ -5753,33 +4878,26 @@ void loop()
       </div>
     `).join("");
 
-    const as5600Grid = $("#as5600-grid");                                             // Referencia as5600Grid: nodo o coleccion DOM usada por la UI.
+    const buttonsGrid = $("#buttons-grid");                                           // Referencia buttonsGrid: nodo o coleccion DOM usada por la UI.
     // Asignacion: actualiza estado o salida calculada.
-    as5600Grid.innerHTML = state.as5600.map((sensor) => `
+    buttonsGrid.innerHTML = state.buttons.map((sensor) => `
       <div class="sensor-card" data-sensor-card="${sensor.key}">
         <div class="sensor-title">
           <b>${sensor.label}</b>
-          <span>AS5600 TCA ${sensor.channel}</span>
+          <span>Boton ${sensor.direction > 0 ? "+" : "-"} N.A. GPIO ${sensor.pin}</span>
         </div>
         <div class="sensor-fields">
-          <label><span class="small-label">Raw 0</span><input type="number" step="1" min="0" max="4095" data-as5600="${sensor.key}" data-field="raw0" value="${sensor.raw0}"></label>
-          <label><span class="small-label">Raw 90</span><input type="number" step="1" min="0" max="4095" data-as5600="${sensor.key}" data-field="raw90" value="${sensor.raw90}"></label>
-          <label><span class="small-label">Neutral</span><input type="number" step="0.1" data-as5600="${sensor.key}" data-field="neutralDeg" value="${sensor.neutralDeg}"></label>
-          <label><span class="small-label">Dir</span><select data-as5600="${sensor.key}" data-field="invert"><option value="false" ${!sensor.invert ? "selected" : ""}>Normal</option><option value="true" ${sensor.invert ? "selected" : ""}>Invert</option></select></label>
+          <label><span class="small-label">Hace</span><input type="text" value="${sensor.direction > 0 ? "Sube a 90" : "Baja a 0"}" readonly></label>
+          <label><span class="small-label">Cable</span><input type="text" value="GPIO ${sensor.pin} a GND" readonly></label>
         </div>
         <div class="action-row">
-          <button class="btn" data-sensor-action="as5600-0" data-key="${sensor.key}">0 deg</button>
-          <button class="btn" data-sensor-action="as5600-90" data-key="${sensor.key}">90 deg</button>
-          <button class="btn" data-sensor-action="as5600-neutral" data-key="${sensor.key}">Neutral</button>
-          <span class="small-label" id="live-${sensor.key}">Raw ${round(sensor.liveRaw, 0)}</span>
+          <span class="small-label" id="live-${sensor.key}">${sensor.livePressed ? "Presionado" : "Abierto"} | ${formatDeg(sensor.liveDeg)}</span>
         </div>
       </div>
     `).join("");
 
     imuGrid.addEventListener("input", onImuInput);                                    // Llamada: ejecuta una accion del modulo actual.
     imuGrid.addEventListener("change", onImuInput);                                   // Llamada: ejecuta una accion del modulo actual.
-    as5600Grid.addEventListener("input", onAs5600Input);                              // Llamada: ejecuta una accion del modulo actual.
-    as5600Grid.addEventListener("change", onAs5600Input);                             // Llamada: ejecuta una accion del modulo actual.
     $("#panel-sensores").addEventListener("click", onSensorAction);                   // Llamada: ejecuta una accion del modulo actual.
   }
 
@@ -5794,11 +4912,11 @@ void loop()
     updateLive();                                                                     // Llamada: ejecuta una accion del modulo actual.
   }
 
-  function onAs5600Input(event) {                                                     // Funcion onAs5600Input: encapsula la logica de sensores AS5600.
-    const key = event.target.dataset.as5600;                                          // Constante key: constante usada en key.
+  function onButtonInput(event) {                                                     // Funcion onButtonInput: encapsula la logica de botones N.A.
+    const key = event.target.dataset.button;                                          // Constante key: constante usada en key.
     const field = event.target.dataset.field;                                         // Constante field: constante usada en field.
     if (!key || !field) return;                                                       // Condicion: valida estado antes de continuar el flujo.
-    const sensor = state.as5600.find((item) => item.key === key);                     // Constante sensor: sensor AS5600 seleccionado.
+    const sensor = state.buttons.find((item) => item.key === key);                    // Constante sensor: boton N.A. seleccionado.
     if (!sensor) return;                                                              // Condicion: valida estado antes de continuar el flujo.
     sensor[field] = field === "invert" ? event.target.value === "true" : numberValue(event.target.value, sensor[field]);
     markDirty();                                                                      // Llamada: ejecuta una accion del modulo actual.
@@ -5811,7 +4929,6 @@ void loop()
     const action = button.dataset.sensorAction;                                       // Constante action: constante usada en action.
     const key = button.dataset.key;                                                   // Constante key: constante usada en key.
     const imu = state.imus.find((item) => item.key === key);                          // Constante imu: constante usada en lectura de sensores IMU/I2C.
-    const as5600 = state.as5600.find((item) => item.key === key);                     // Constante as5600: sensor magnetico de codo.
 
     if (imu) {                                                                        // Condicion: valida estado antes de continuar el flujo.
       if (action === "imu-neutral") imu.neutralDeg = round(imu.liveDeg, 1);           // Condicion: valida estado antes de continuar el flujo.
@@ -5822,23 +4939,14 @@ void loop()
       log(`${imu.label}: captura ${action.replace("imu-", "")}`, "ok");
     }
 
-    if (as5600) {                                                                     // Condicion: valida estado antes de continuar el flujo.
-      if (action === "as5600-0") as5600.raw0 = Math.round(as5600.liveRaw);            // Condicion: valida estado antes de continuar el flujo.
-      if (action === "as5600-90") as5600.raw90 = Math.round(as5600.liveRaw);          // Condicion: valida estado antes de continuar el flujo.
-      if (action === "as5600-neutral") as5600.neutralDeg = round(as5600.liveDeg, 1);  // Condicion: valida estado antes de continuar el flujo.
-      updateSensorInputs(key);                                                        // Llamada: ejecuta una accion del modulo actual.
-      // Llamada: ejecuta una accion del modulo actual.
-      log(`${as5600.label}: captura ${action.replace("as5600-", "")}`, "ok");
-    }
-
     markDirty();                                                                      // Llamada: ejecuta una accion del modulo actual.
     updateLive();                                                                     // Llamada: ejecuta una accion del modulo actual.
   }
 
   function updateSensorInputs(key) {                                                  // Funcion updateSensorInputs: actualiza sensor inputs.
     // Llamada: ejecuta una accion del modulo actual.
-    $$(`[data-imu="${key}"], [data-as5600="${key}"]`).forEach((input) => {
-      const source = state.imus.find((item) => item.key === key) || state.as5600.find((item) => item.key === key); // Constante source: constante usada en source.
+    $$(`[data-imu="${key}"], [data-button="${key}"]`).forEach((input) => {
+      const source = state.imus.find((item) => item.key === key) || state.buttons.find((item) => item.key === key); // Constante source: constante usada en source.
       if (!source) return;                                                            // Condicion: valida estado antes de continuar el flujo.
       const field = input.dataset.field;                                              // Constante field: constante usada en field.
       if (!field) return;                                                             // Condicion: valida estado antes de continuar el flujo.
@@ -5855,12 +4963,8 @@ void loop()
       imu.neutralDeg = round(imu.liveDeg, 1);                                         // Asignacion: actualiza estado o salida calculada.
       updateSensorInputs(imu.key);                                                    // Llamada: ejecuta una accion del modulo actual.
     });
-    state.as5600.forEach((sensor) => {                                                // Llamada: ejecuta una accion del modulo actual.
-      sensor.neutralDeg = round(sensor.liveDeg, 1);                                   // Asignacion: actualiza estado o salida calculada.
-      updateSensorInputs(sensor.key);                                                 // Llamada: ejecuta una accion del modulo actual.
-    });
     markDirty();                                                                      // Llamada: ejecuta una accion del modulo actual.
-    log("Neutral capturado para todos los sensores", "ok");                           // Llamada: ejecuta una accion del modulo actual.
+    log("Neutral capturado para IMU", "ok");                                          // Llamada: ejecuta una accion del modulo actual.
   }
 
   function renderMapping() {                                                          // Funcion renderMapping: renderiza mapping.
@@ -5939,13 +5043,16 @@ void loop()
       linkedImu.liveSpeed = servo.liveSensorSpeed;                                    // Asignacion: actualiza estado o salida calculada.
       linkedImu.online = item.online !== false;                                       // Asignacion: actualiza estado o salida calculada.
     }
-    const linkedAs5600 = state.as5600.find((sensor) => sensor.servoId === servo.id);  // Constante linkedAs5600: sensor AS5600 enlazado al servo.
-    if (linkedAs5600) {                                                               // Condicion: valida estado antes de continuar el flujo.
-      linkedAs5600.liveDeg = servo.liveSensor;                                        // Asignacion: actualiza estado o salida calculada.
-      linkedAs5600.liveSpeed = servo.liveSensorSpeed;                                 // Asignacion: actualiza estado o salida calculada.
-      linkedAs5600.online = item.online !== false;                                    // Asignacion: actualiza estado o salida calculada.
-      if (typeof item.raw === "number") linkedAs5600.liveRaw = item.raw;              // Condicion: valida estado antes de continuar el flujo.
-    }
+    const linkedButtons = state.buttons.filter((sensor) => sensor.servoId === servo.id); // Constante linkedButtons: botones N.A. enlazados al servo.
+    const buttonItems = Array.isArray(item.buttons) ? item.buttons : [];              // Constante buttonItems: detalle de telemetria por boton.
+    linkedButtons.forEach((linkedButton) => {                                         // Bucle: actualiza todas las tarjetas del codo.
+      const detail = buttonItems.find((btn) => Number(btn.pin) === linkedButton.pin || Number(btn.direction) === linkedButton.direction) || {};
+      linkedButton.liveDeg = servo.liveSensor;                                        // Asignacion: actualiza estado o salida calculada.
+      linkedButton.liveSpeed = servo.liveSensorSpeed;                                 // Asignacion: actualiza estado o salida calculada.
+      linkedButton.online = item.online !== false;                                    // Asignacion: actualiza estado o salida calculada.
+      linkedButton.livePressed = Boolean(detail.pressed ?? (linkedButton.direction > 0 ? item.pressed : false)); // Asignacion: estado abierto/presionado.
+      if (typeof detail.pin === "number") linkedButton.pin = detail.pin;              // Condicion: valida estado antes de continuar el flujo.
+    });
   }
 
   function updateFooterSummary() {                                                    // Funcion updateFooterSummary: actualiza footer summary.
@@ -7837,7 +6944,7 @@ void loop()
 
   function getSensorForServo(servo) {                                                 // Funcion getSensorForServo: obtiene sensor for servo.
     return state.imus.find((item) => item.key === servo.sensorKey) ||                 // Retorno: entrega el resultado al llamador.
-      state.as5600.find((item) => item.key === servo.sensorKey) ||                      // Llamada: ejecuta una accion del modulo actual.
+      state.buttons.find((item) => item.key === servo.sensorKey) ||                   // Llamada: ejecuta una accion del modulo actual.
       null;
   }
 
@@ -7851,7 +6958,7 @@ void loop()
   }
 
   function sendSensorProfile() {                                                      // Funcion sendSensorProfile: envia sensor profile.
-    sendCommand({ type: "cmd_calibration_sensors", imus: profileImus(), as5600: profileAs5600() }, "Perfil sensores"); // Llamada: ejecuta una accion del modulo actual.
+    sendCommand({ type: "cmd_calibration_sensors", imus: profileImus(), buttons: profileButtons() }, "Perfil sensores"); // Llamada: ejecuta una accion del modulo actual.
   }
 
   function sendMapProfile() {                                                         // Funcion sendMapProfile: envia map profile.
@@ -7897,15 +7004,16 @@ void loop()
     }));
   }
 
-  function profileAs5600() {                                                          // Funcion profileAs5600: encapsula la calibracion de sensores AS5600.
-    return state.as5600.map((sensor) => ({                                            // Retorno: entrega el resultado al llamador.
+  function profileButtons() {                                                         // Funcion profileButtons: encapsula la calibracion de botones N.A.
+    return state.buttons.map((sensor, idx) => ({                                      // Retorno: entrega el resultado al llamador.
+      idx,                                                                            // Campo idx: indice fisico esperado por firmware.
       key: sensor.key,                                                                // Campo key: campo de datos para key.
-      channel: sensor.channel,                                                        // Campo channel: canal TCA9548A del AS5600.
+      pin: sensor.pin,                                                                // Campo pin: GPIO del boton N.A.
       servoId: sensor.servoId,                                                        // Campo servoId: campo de datos para control angular de servos.
       label: sensor.label,                                                            // Campo label: campo de datos para label.
-      raw0: sensor.raw0,                                                              // Campo raw0: lectura AS5600 para 0 grados.
-      raw90: sensor.raw90,                                                            // Campo raw90: lectura AS5600 para 90 grados.
-      neutralDeg: sensor.neutralDeg,                                                  // Campo neutralDeg: campo de datos para control angular de servos.
+      direction: sensor.direction,                                                    // Campo direction: +1 sube, -1 baja.
+      openDeg: sensor.openDeg,                                                        // Campo openDeg: angulo inicial del boton.
+      pressedDeg: sensor.pressedDeg,                                                  // Campo pressedDeg: limite de avance del boton.
       invert: sensor.invert                                                           // Campo invert: campo de datos para invert.
     }));
   }
@@ -7927,7 +7035,7 @@ void loop()
         camera: "ESP32-CAM",                                                          // Campo camera: campo de datos para camara y video.
         servos: "6x DS51150 150kg/cm 270deg",                                         // Campo servos: campo de datos para control angular de servos.
         imu: "4x MPU6050 via TCA9548A",                                               // Campo imu: campo de datos para lectura de sensores IMU/I2C.
-        as5600: "2x AS5600 via TCA9548A",                                             // Campo as5600: campo de datos para sensores de codo.
+        buttons: "4x normally-open elbow buttons on GPIO4/GPIO5/GPIO6/GPIO7",         // Campo buttons: campo de datos para sensores de codo.
         servoDriver: "PCA9685"                                                        // Campo servoDriver: campo de datos para control angular de servos.
       },
       connection: {                                                                   // Campo connection: objeto anidado de configuracion.
@@ -7947,7 +7055,7 @@ void loop()
       servos: profileServos(),                                                        // Campo servos: campo de datos para control angular de servos.
       sensors: {                                                                      // Campo sensors: objeto anidado de configuracion.
         imus: profileImus(),                                                          // Campo imus: campo de datos para lectura de sensores IMU/I2C.
-        as5600: profileAs5600()                                                       // Campo as5600: campo de datos para sensores AS5600.
+        buttons: profileButtons()                                                     // Campo buttons: campo de datos para botones N.A.
       },
       tuning: {                                                                       // Campo tuning: objeto anidado de configuracion.
         assistLevel: state.tuning.assistLevel,                                        // Campo assistLevel: campo de datos para assist level.
@@ -8046,7 +7154,8 @@ void loop()
         const value = servo.minAngle + span * (0.15 + 0.55 * (Math.sin(t * base + idx) * 0.5 + 0.5)); // Constante value: constante usada en value.
         updateServoSensorReading(servo, round(value, 1), sampledAt);                  // Llamada: ejecuta una accion del modulo actual.
         servo.moving = Math.abs(Math.sin(t * base + idx)) > 0.12 || Math.abs(servo.liveSensorSpeed) >= 1; // Asignacion: actualiza estado o salida calculada.
-        syncLinkedSensorState(servo, { raw: as5600RawFromDeg(getSensorForServo(servo) || {}, servo.liveSensor) }); // Llamada: ejecuta una accion del modulo actual.
+        const linked = getSensorForServo(servo) || {};
+        syncLinkedSensorState(servo, { pressed: servo.liveSensor >= ((linked.openDeg ?? 0) + (linked.pressedDeg ?? 90)) / 2 }); // Llamada: ejecuta una accion del modulo actual.
       });
       state.telemetry.mode = "demo";                                                  // Asignacion: actualiza estado o salida calculada.
       state.telemetry.battery = { v: 11.6, pct: 82, amp: 0.0 };                       // Asignacion: actualiza estado o salida calculada.
@@ -8055,11 +7164,6 @@ void loop()
     }, 100);
     $("#btn-demo").textContent = "Detener";                                           // Llamada: ejecuta una accion del modulo actual.
     log("Demo iniciado", "ok");                                                       // Llamada: ejecuta una accion del modulo actual.
-  }
-
-  function as5600RawFromDeg(sensor, deg) {                                            // Funcion as5600RawFromDeg: estima raw AS5600 desde grados para demo.
-    const ratio = clamp(deg / 90, 0, 1);                                              // Constante ratio: constante usada en ratio.
-    return Math.round((sensor.raw0 ?? 0) + ((sensor.raw90 ?? 1024) - (sensor.raw0 ?? 0)) * ratio); // Retorno: entrega el resultado al llamador.
   }
 
   function updateLive() {                                                             // Funcion updateLive: actualiza live.
@@ -8101,11 +7205,11 @@ void loop()
       // Condicion: valida estado antes de continuar el flujo.
       if (label) label.textContent = `${formatDeg(imu.liveDeg)} | ${formatSpeed(imu.liveSpeed)}`;
     });
-    state.as5600.forEach((sensor) => {                                                // Llamada: ejecuta una accion del modulo actual.
+    state.buttons.forEach((sensor) => {                                               // Llamada: ejecuta una accion del modulo actual.
       // Referencia label: nodo o coleccion DOM usada por la UI.
       const label = $(`#live-${sensor.key}`);
       // Condicion: valida estado antes de continuar el flujo.
-      if (label) label.textContent = `Raw ${Math.round(sensor.liveRaw)} | ${formatDeg(sensor.liveDeg)} | ${formatSpeed(sensor.liveSpeed)}`;
+      if (label) label.textContent = `${sensor.livePressed ? "Presionado" : "Abierto"} | ${formatDeg(sensor.liveDeg)} | ${formatSpeed(sensor.liveSpeed)}`;
     });
   }
 

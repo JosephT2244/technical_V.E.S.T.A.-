@@ -25,12 +25,12 @@ Responsabilidades:
 
 <!-- Comentario de lista: Lee 4 MPU6050 por TCA9548A. -->
 - Lee 4 MPU6050 por TCA9548A.
-<!-- Comentario de lista: Lee 2 AS5600 de codo por I2C. -->
-- Lee 2 AS5600 de codo por I2C.
+<!-- Comentario de lista: Lee 4 botones normalmente abiertos de codo. -->
+- Lee 4 botones normalmente abiertos de codo por GPIO con `INPUT_PULLUP`.
 <!-- Comentario de lista: Controla 6 servos DS51150 por PCA9685. -->
 - Controla 6 servos DS51150 por PCA9685.
-<!-- Comentario de lista: Atiende el boton fisico de paro en PIN ESTOP. -->
-- Atiende el boton fisico de paro en `PIN_ESTOP`.
+<!-- Comentario de lista: Atiende paro y reset remotos. -->
+- Atiende paro y reset remotos (`cmd_stop` / `cmd_reset`).
 <!-- Comentario de lista: Publica WebSocket en ws //vesta-exo local 81. -->
 - Publica WebSocket en `ws://vesta-exo.local:81`.
 <!-- Comentario de lista: Acepta comandos JSON por USB serial a 115200 baudios para la pagina tecnica. -->
@@ -258,31 +258,42 @@ El S3 es la autoridad de seguridad y movimiento. La CAM no mueve servos; solo
 <!-- Comentario de parrafo: entrega vision/audio y reporta su estado al S3. -->
 entrega vision/audio y reporta su estado al S3.
 
-<!-- Comentario de seccion: Sensores AS5600. -->
-## Sensores AS5600
+<!-- Comentario de seccion: Botones normalmente abiertos. -->
+## Botones normalmente abiertos
 
-<!-- Comentario de dato: Los dos AS5600 de codo se leen por I2C a traves del TCA9548A. -->
-Los dos AS5600 de codo se leen por I2C a traves del TCA9548A:
+<!-- Comentario de dato: Los cuatro botones N A de codo se leen por GPIO directo. -->
+Los cuatro botones N.A. de codo se leen por GPIO directo con pull-up interno:
 
 <!-- Comentario de bloque de codigo: ejemplo literal para copiar o verificar. -->
 ```text
-Codo izquierdo -> TCA4 / direccion 0x36
-Codo derecho   -> TCA5 / direccion 0x36
+Codo izquierdo + -> GPIO4
+Codo izquierdo - -> GPIO5
+Codo derecho +   -> GPIO6
+Codo derecho -   -> GPIO7
 ```
 
-<!-- Comentario de parrafo: Cada AS5600 necesita iman diametral alineado con el eje del codo. -->
-Cada AS5600 necesita un iman diametral alineado con el eje del codo, VCC,
-<!-- Comentario de parrafo: GND comun y SDA SCL conectados al canal TCA correspondiente. -->
-`GND` comun y `SDA`/`SCL` conectados al canal TCA correspondiente.
+<!-- Comentario de parrafo: Cada boton N A va entre GPIO y GND. -->
+Cada botón normalmente abierto va entre su `GPIO` y `GND`. El firmware usa
+<!-- Comentario de parrafo: INPUT PULLUP abierto HIGH presionado LOW. -->
+`INPUT_PULLUP`, así que abierto lee `HIGH` y presionado lee `LOW`.
 
-<!-- Comentario de parrafo: Para que el AS5600 mueva servo el S3 debe estar armado y en modo assisted o. -->
-Para que el AS5600 mueva servo, el S3 debe estar armado y en modo `assisted` o
-<!-- Comentario de parrafo: automatic en modo manual la lectura solo se reporta por telemetria Si el. -->
-`automatic`; en modo `manual` la lectura solo se reporta por telemetria. Si el
-<!-- Comentario de parrafo: raw cambia pero el codo no se mueve recalibra Raw 0 Raw 90 y Neutral. -->
-raw cambia pero el codo no se mueve, recalibra `Raw 0`, `Raw 90` y `Neutral`
-<!-- Comentario de parrafo: desde el panel Sensores y confirma que el paro de emergencia este limpio. -->
-desde el panel Sensores y confirma que el paro de emergencia este limpio.
+<!-- Comentario de parrafo: Al presionar el boton el codo avanza de grado en grado. -->
+Al presionar un botón `+`, el codo avanza 1° inmediato y luego 1° cada
+<!-- Comentario de parrafo: BUTTON STEP INTERVAL MS mientras se mantiene presionado. -->
+`BUTTON_STEP_INTERVAL_MS` mientras se mantiene presionado, hasta 90°. Al
+<!-- Comentario de parrafo: presionar un boton menos baja el mismo angulo acumulado. -->
+presionar un botón `-`, baja con la misma cadencia hasta 0°. Al soltar cualquier
+<!-- Comentario de parrafo: boton se mantiene el angulo alcanzado. -->
+botón se mantiene el ángulo alcanzado.
+
+<!-- Comentario de parrafo: Para que el boton N A mueva servo el S3 debe estar armado y en modo assisted o automatic. -->
+Para que el botón mueva el servo, el S3 debe estar armado y en modo `assisted`
+<!-- Comentario de parrafo: o automatic. -->
+o `automatic`; en modo `manual` la lectura solo se reporta por telemetría. Si el
+<!-- Comentario de parrafo: estado cambia pero el codo no se mueve revisa angulos y paro. -->
+estado cambia pero el codo no se mueve, confirma que los servos estén armados,
+<!-- Comentario de parrafo: que el boton cierre entre GPIO y GND y que el paro de emergencia este limpio. -->
+que el botón cierre entre `GPIO` y `GND`, y que el paro de emergencia esté limpio.
 
 <!-- Comentario de seccion: MPU6050 + servos. -->
 ## MPU6050 + servos
@@ -291,8 +302,8 @@ desde el panel Sensores y confirma que el paro de emergencia este limpio.
 Los 4 MPU6050 controlan solo los servos de hombro: lateral y frontal de cada
 <!-- Comentario de parrafo: lado Los codos no usan MPU los servos de codo izquierdo y derecho siguen los. -->
 lado. Los codos no usan MPU; los servos de codo izquierdo y derecho siguen los
-<!-- Comentario de parrafo: 2 AS5600. -->
-2 AS5600.
+<!-- Comentario de parrafo: 4 botones N A. -->
+4 botones N.A.
 
 <!-- Comentario de parrafo: El firmware S3 mantiene la ultima lectura MPU valida cuando hay un paquete I2C. -->
 El firmware S3 mantiene la ultima lectura MPU valida cuando hay un paquete I2C
@@ -302,8 +313,8 @@ malo y filtra saltos imposibles del acelerometro antes de actualizar esos 4
 servos de hombro. La rampa de velocidad se aplica a los 6 servos en modo
 <!-- Comentario de parrafo: manual assisted y automatic asi los codos tambien se mueven suave desde. -->
 `manual`, `assisted` y `automatic`, asi los codos tambien se mueven suave desde
-<!-- Comentario de parrafo: sus AS5600. -->
-sus AS5600.
+<!-- Comentario de parrafo: sus botones N A. -->
+sus botones N.A.
 
 <!-- Comentario de parrafo: La consola puede ajustar esa respuesta en vivo con cmd tuning. -->
 La consola puede ajustar esa respuesta en vivo con `cmd_tuning`, pero por

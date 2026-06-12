@@ -1954,11 +1954,11 @@ input[type="range"] { width: 100%; accent-color: var(--vesta); }
    Estrategia:
    - Topbar siempre 1 fila a ≥440px; 2 filas a <440px
    - Rail vertical hasta 768px, luego drawer con hamburguesa
-   - Side panel: columna derecha en desktop/desktop chico, bandeja en <900px
+   - Side panel: columna derecha en desktop amplio, bandeja en <1180px
    =================================================================== */
 
-/* ── 900px: side panel baja como bandeja inferior compacta ───────── */
-@media (max-width: 900px) {
+/* ── 1180px: side panel baja como bandeja inferior compacta ──────── */
+@media (max-width: 1180px) {
   /* Regla CSS: estilo asociado a .layout. */
   .layout {
     grid-template-columns: var(--rail-w) minmax(0, 1fr);                              /* Propiedad grid-template-columns: define presentacion visual del bloque. */
@@ -1999,6 +1999,103 @@ input[type="range"] { width: 100%; accent-color: var(--vesta); }
     aspect-ratio: 16 / 9;                                                             /* Propiedad aspect-ratio: define presentacion visual del bloque. */
     min-height: 132px;                                                                /* Propiedad min-height: define presentacion visual del bloque. */
     max-height: 170px;                                                                /* Propiedad max-height: define presentacion visual del bloque. */
+  }
+}
+
+/* === Responsive hardening ==========================================
+   Capa final de presentacion: evita desbordes sin modificar DOM ni JS.
+   =================================================================== */
+.brand-details,
+.panel-head > *,
+.workspace,
+.work-panel,
+.diagnostic-grid > *,
+.sensor-layout > *,
+.mapping-layout > *,
+.handoff-grid > *,
+.manual-grid > *,
+.firmware-grid > *,
+.firmware-quick > *,
+.firmware-card,
+.connect-panel,
+.profile-panel,
+.table-wrap,
+.visual-stage,
+.manual-stage {
+  min-width: 0;
+}
+
+.brand-details h1,
+.brand-details .eyebrow,
+.panel-head h2,
+.subhead h3,
+.subhead span,
+.firmware-head h3,
+.firmware-quick-copy h3,
+.firmware-code-head b,
+.footer-left span,
+.footer-center span,
+.footer-right span,
+.status-pill span,
+.status-pill b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn,
+.device-badge,
+.firmware-step {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.firmware-quick-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.firmware-quick-actions .btn,
+.firmware-quick-actions .device-badge {
+  flex: 1 1 104px;
+}
+
+.camera-box,
+.visual-stage,
+.manual-stage {
+  width: 100%;
+  max-width: 100%;
+}
+
+.cal-table {
+  min-width: min(1100px, calc(100vw - 32px));
+}
+
+@media (max-width: 1180px) {
+  .diagnostic-grid,
+  .manual-grid,
+  .sensor-layout,
+  .mapping-layout,
+  .handoff-grid,
+  .firmware-grid,
+  .tests-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .firmware-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .firmware-form label:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .visual-stage,
+  #exo-canvas,
+  .manual-stage,
+  #exo-canvas-manual {
+    min-height: clamp(300px, 44vh, 460px);
   }
 }
 
@@ -2126,6 +2223,7 @@ input[type="range"] { width: 100%; accent-color: var(--vesta); }
   /* Side panel: bandeja inferior vertical y compacta */
   .side-panel {
     flex-direction: column;                                                           /* Propiedad flex-direction: define presentacion visual del bloque. */
+    flex-wrap: nowrap;                                                                /* Propiedad flex-wrap: define presentacion visual del bloque. */
     overflow-y: auto;                                                                 /* Propiedad overflow-y: define presentacion visual del bloque. */
     overflow-x: hidden;                                                               /* Propiedad overflow-x: define presentacion visual del bloque. */
     max-height: clamp(210px, 36vh, 320px);                                            /* Propiedad max-height: define presentacion visual del bloque. */
@@ -2469,6 +2567,272 @@ input[type="range"] { width: 100%; accent-color: var(--vesta); }
   /* Alerta ESP: modal de dispositivo detectado. */
   .esp-alert-actions {
     grid-template-columns: 1fr;                                                       /* Propiedad grid-template-columns: define presentacion visual del bloque. */
+  }
+}
+
+/* === Responsive last mile ==========================================
+   Gana a bloques repetidos del modal ESP que aparecen antes.
+   =================================================================== */
+@media (max-width: 420px) {
+  .esp-alert {
+    width: min(100%, calc(100vw - 20px));
+  }
+
+  .esp-alert-head,
+  .esp-alert-body,
+  .esp-alert-actions,
+  .esp-alert-foot {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .esp-alert-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+    align-items: start;
+  }
+
+  .esp-alert-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .esp-alert {
+    max-height: calc(100vh - 18px);
+    overflow: auto;
+  }
+}
+
+/* === Responsive finish =============================================
+   Ajustes de cierre para moviles estrechos y orientacion horizontal.
+   =================================================================== */
+@media (max-width: 640px) {
+  .layout {
+    overflow: hidden;
+  }
+
+  .workspace {
+    overscroll-behavior: contain;
+  }
+
+  .side-panel {
+    padding: 10px;
+    gap: 10px;
+    flex-wrap: nowrap;
+    max-height: clamp(230px, 42vh, 340px);
+  }
+
+  .side-panel > section,
+  .connect-panel,
+  .camera-panel {
+    width: 100%;
+  }
+
+  .panel-head {
+    margin-bottom: 10px;
+  }
+
+  .action-row {
+    width: 100%;
+  }
+
+  .action-row .btn,
+  .button-grid .btn {
+    min-width: 0;
+  }
+
+  .firmware-code-head {
+    flex-wrap: wrap;
+  }
+
+  .firmware-code-head .btn {
+    flex: 1 1 180px;
+  }
+
+  .firmware-form {
+    grid-template-columns: 1fr;
+  }
+
+  .firmware-form label:last-child {
+    grid-column: auto;
+  }
+
+  .camera-panel .camera-box {
+    min-height: clamp(160px, 48vw, 230px);
+    max-height: 260px;
+  }
+
+  .visual-stage,
+  #exo-canvas,
+  .manual-stage,
+  #exo-canvas-manual {
+    min-height: clamp(240px, 52vh, 360px);
+  }
+
+  .test-row {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .test-row .test-result,
+  .test-row .btn {
+    grid-column: 2;
+    justify-self: stretch;
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .status-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .status-pill {
+    width: 100%;
+  }
+
+  .firmware-quick {
+    padding: 12px;
+  }
+
+  .firmware-quick-flow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .firmware-step {
+    min-height: 32px;
+    padding-inline: 5px;
+  }
+
+  .profile-toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 420px) {
+  :root {
+    --footer-h: 58px;
+  }
+
+  .brand {
+    gap: 9px;
+  }
+
+  .brand-mark {
+    width: 38px;
+    height: 38px;
+  }
+
+  .nav-toggle {
+    width: 36px;
+    height: 36px;
+  }
+
+  .status-pill > span:nth-child(2) {
+    display: none;
+  }
+
+  .status-pill {
+    grid-template-columns: 8px minmax(0, 1fr);
+  }
+
+  .btn {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
+  .button-grid,
+  .camera-panel .cam-control-grid,
+  .metric-grid,
+  .sensor-fields,
+  .manual-readout,
+  .readiness-gate,
+  .firmware-quick-flow {
+    grid-template-columns: 1fr;
+  }
+
+  .firmware-quick-actions .btn,
+  .firmware-quick-actions .device-badge {
+    flex-basis: 100%;
+  }
+
+  .control-line,
+  .map-row,
+  .i2c-diagnostic-head,
+  .i2c-diagnostic-meta,
+  .i2c-channel-row,
+  .esp-alert-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .control-line b,
+  .map-row > :last-child {
+    text-align: left;
+  }
+
+  .check-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .check-row small {
+    grid-column: 2;
+  }
+
+  .cam-manual-menu {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  .cam-manual-form {
+    grid-template-columns: 1fr;
+  }
+
+  .app-footer {
+    align-content: center;
+  }
+
+  .footer-left span:not(.footer-brand):not(.footer-mode-pill) {
+    display: none;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  .layout {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .side-panel {
+    flex-direction: row;
+    max-height: min(158px, 42vh);
+    padding: 8px 10px;
+  }
+
+  .side-panel > section {
+    flex: 1 1 230px;
+  }
+
+  .side-panel .log,
+  .serial-monitor,
+  .i2c-serial-monitor {
+    height: 92px;
+    min-height: 92px;
+    max-height: 92px;
+  }
+
+  .side-panel .camera-panel .camera-box {
+    min-height: 96px;
+    max-height: 118px;
+  }
+
+  .visual-stage,
+  #exo-canvas,
+  .manual-stage,
+  #exo-canvas-manual {
+    min-height: 220px;
   }
 }
 

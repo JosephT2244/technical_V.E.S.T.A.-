@@ -28,7 +28,7 @@
 #define WIFI_BOOT_CONNECT_TIMEOUT_MS 1500                                             // Macro WIFI_BOOT_CONNECT_TIMEOUT_MS: macro de configuracion para comunicaciones y puertos.
 #define WIFI_RECONNECT_INTERVAL_MS  5000                                              // Macro WIFI_RECONNECT_INTERVAL_MS: macro de configuracion para comunicaciones y puertos.
 
-// 1 = isolate servo/PCA9685 tests from IMU/AS5600 setup and reads.
+// 1 = isolate servo/PCA9685 tests from IMU/button setup and reads.
 // Set to 0 when the sensor-assisted behavior is ready to test again.
 #define SENSORLESS_SERVO_TEST 0                                                       // Macro SENSORLESS_SERVO_TEST: prueba manual sin sensores.
 
@@ -51,16 +51,20 @@
 // ESP32-S3 N16R8 pins.
 #define PIN_SDA        8                                                              // Macro PIN_SDA: macro de configuracion para pin sda.
 #define PIN_SCL        9                                                              // Macro PIN_SCL: macro de configuracion para pin scl.
-// Boton fisico de paro de emergencia retirado. Pin GPIO4 libre para otro uso.
+// Botones normalmente abiertos de codo: cada boton va entre GPIO y GND.
+// El firmware usa INPUT_PULLUP, por eso abierto = HIGH y presionado = LOW.
+#define PIN_BTN_L_ELB_POS  4                                                          // Macro PIN_BTN_L_ELB_POS: boton N.A. que sube el codo izquierdo.
+#define PIN_BTN_L_ELB_NEG  5                                                          // Macro PIN_BTN_L_ELB_NEG: boton N.A. que baja el codo izquierdo.
+#define PIN_BTN_R_ELB_POS  6                                                          // Macro PIN_BTN_R_ELB_POS: boton N.A. que sube el codo derecho.
+#define PIN_BTN_R_ELB_NEG  7                                                          // Macro PIN_BTN_R_ELB_NEG: boton N.A. que baja el codo derecho.
 // (PIN_ESTOP ya no se usa en el firmware; paro/reset es solo remoto.)
-#define I2C_CLOCK_HZ   400000 // Mas rapido para que 4 MPU + 2 AS5600 no pausen la rampa de servos.
+#define I2C_CLOCK_HZ   400000 // Mas rapido para que 4 MPU no pausen la rampa de servos.
 #define I2C_BOOT_SETTLE_MS 1000                                                       // Macro I2C_BOOT_SETTLE_MS: espera para que PCA/TCA/sensores despierten antes de escanear.
 
 // I2C devices.
 #define TCA_ADDR       0x70                                                           // Macro TCA_ADDR: macro de configuracion para lectura de sensores IMU/I2C.
 #define PCA_ADDR       0x40                                                           // Macro PCA_ADDR: macro de configuracion para pca addr.
 #define MPU_ADDR       0x68                                                           // Macro MPU_ADDR: macro de configuracion para lectura de sensores IMU/I2C.
-#define AS5600_ADDR    0x36                                                           // Macro AS5600_ADDR: direccion I2C fija del sensor magnetico AS5600.
 
 // IMU logical indices (used as array indices for imuCfg[], filters, etc.).
 // These are NOT the physical TCA9548A channel numbers — see IMU_TCA_CHANNEL
@@ -72,16 +76,19 @@
 #define NUM_IMUS       4                                                              // Macro NUM_IMUS: macro de configuracion para lectura de sensores IMU/I2C.
 
 // Physical TCA9548A channel for each IMU index above.
-// MPUs use channels 0..3; the elbow AS5600 sensors use channels 4 and 5.
+// MPUs use channels 0..3; elbow buttons are direct GPIO inputs.
 static const uint8_t IMU_TCA_CHANNEL[NUM_IMUS] = { 0, 1, 2, 3 };                      // Arreglo IMU_TCA_CHANNEL: canales fisicos del multiplexor TCA9548A para cada IMU.
 
-// AS5600 logical indices and physical TCA9548A channels. AS5600 has fixed I2C
-// address 0x36, so the two elbow sensors must be isolated on different TCA
-// channels.
-#define AS5600_L_ELB   0                                                              // Macro AS5600_L_ELB: indice logico del AS5600 del codo izquierdo.
-#define AS5600_R_ELB   1                                                              // Macro AS5600_R_ELB: indice logico del AS5600 del codo derecho.
-#define NUM_AS5600     2                                                              // Macro NUM_AS5600: cantidad de sensores AS5600 de codo.
-static const uint8_t AS5600_TCA_CHANNEL[NUM_AS5600] = { 4, 5 };                       // Arreglo AS5600_TCA_CHANNEL: canales fisicos del TCA para codos izq/der.
+// Normally-open elbow button logical indices and pins.
+#define BUTTON_L_ELB_POS   0                                                          // Macro BUTTON_L_ELB_POS: sube codo izquierdo.
+#define BUTTON_L_ELB_NEG   1                                                          // Macro BUTTON_L_ELB_NEG: baja codo izquierdo.
+#define BUTTON_R_ELB_POS   2                                                          // Macro BUTTON_R_ELB_POS: sube codo derecho.
+#define BUTTON_R_ELB_NEG   3                                                          // Macro BUTTON_R_ELB_NEG: baja codo derecho.
+#define BUTTON_L_ELB       BUTTON_L_ELB_POS                                           // Macro BUTTON_L_ELB: compatibilidad con perfiles anteriores.
+#define BUTTON_R_ELB       BUTTON_R_ELB_POS                                           // Macro BUTTON_R_ELB: compatibilidad con perfiles anteriores.
+#define NUM_BUTTONS        4                                                          // Macro NUM_BUTTONS: cantidad de botones N.A. de codo.
+static const uint8_t BUTTON_PIN[NUM_BUTTONS] = { PIN_BTN_L_ELB_POS, PIN_BTN_L_ELB_NEG, PIN_BTN_R_ELB_POS, PIN_BTN_R_ELB_NEG }; // Arreglo BUTTON_PIN: pines GPIO para botones.
+static const int8_t BUTTON_DIRECTION[NUM_BUTTONS] = { 1, -1, 1, -1 };                 // Arreglo BUTTON_DIRECTION: + sube hacia 90, - baja hacia 0.
 
 // PCA9685 servo channels. Keep this in the same order used by the app.
 #define SRV_L_LAT      0                                                              // Macro SRV_L_LAT: macro de configuracion para srv l lat.
@@ -107,17 +114,14 @@ static const uint8_t AS5600_TCA_CHANNEL[NUM_AS5600] = { 4, 5 };                 
 static const float SRV_HARD_MIN[N_SERVOS] = { 0,   0,  0,  0,   0,  0 };              // Arreglo SRV_HARD_MIN: limites mecanicos minimos permitidos por servo.
 static const float SRV_HARD_MAX[N_SERVOS] = {90, 120, 90, 90, 120, 90 };              // Arreglo SRV_HARD_MAX: limites mecanicos maximos permitidos por servo.
 
-// AS5600 elbow defaults. RAW_ANGLE is 12-bit: 4096 counts per full turn, so
-// 90 degrees equals 1024 counts. If the UI has not captured raw0/raw90 yet,
-// the firmware uses the first valid boot reading as the neutral baseline.
-#define AS5600_RAW_0DEG_DEFAULT  0                                                    // Macro AS5600_RAW_0DEG_DEFAULT: lectura raw por defecto a 0 grados.
-#define AS5600_RAW_90DEG_DEFAULT 1024                                                 // Macro AS5600_RAW_90DEG_DEFAULT: lectura raw por defecto a 90 grados.
-#define AS5600_ELBOW_ALWAYS_ON   0                                                    // Macro AS5600_ELBOW_ALWAYS_ON: 0 = en modo manual los codos NO siguen al AS5600, asi el control manual de la app mueve los 6 servos sin ser pisado (los codos siguen al sensor en assisted/automatic).
-#define AS5600_COUNTS_PER_REV    4096.0f                                              // Macro AS5600_COUNTS_PER_REV: resolucion del AS5600.
-#define AS5600_COUNTS_90_DEG     1024.0f                                              // Macro AS5600_COUNTS_90_DEG: cuentas equivalentes a 90 grados.
-#define AS5600_RAW_DEADBAND      1.5f                                                 // Macro AS5600_RAW_DEADBAND: zona muerta minima para que el codo no avance a saltos.
-#define AS5600_FAIL_LIMIT        4                                                    // Macro AS5600_FAIL_LIMIT: lecturas I2C fallidas antes de marcar offline.
-#define AS5600_RESPONSE_GAIN     4.0f                                                 // Macro AS5600_RESPONSE_GAIN: mas respuesta del iman en movimiento de servo.
+// Normally-open elbow button defaults. Positive buttons advance one degree at
+// a time toward 90 while held; negative buttons subtract one degree at a time
+// toward 0 while held.
+#define BUTTON_OPEN_DEG_DEFAULT     0.0f                                              // Macro BUTTON_OPEN_DEG_DEFAULT: angulo inicial/minimo del boton.
+#define BUTTON_PRESSED_DEG_DEFAULT 90.0f                                              // Macro BUTTON_PRESSED_DEG_DEFAULT: limite maximo del boton.
+#define BUTTON_STEP_DEG_DEFAULT     1.0f                                              // Macro BUTTON_STEP_DEG_DEFAULT: avance por paso mientras el boton esta presionado.
+#define BUTTON_STEP_INTERVAL_MS      45                                               // Macro BUTTON_STEP_INTERVAL_MS: tiempo entre pasos de 1 grado.
+#define BUTTON_ELBOW_ALWAYS_ON      1                                                 // Macro BUTTON_ELBOW_ALWAYS_ON: 1 = los botones mueven codos tambien en manual.
 #define IMU_RESPONSE_GAIN        3.0f                                                 // Macro IMU_RESPONSE_GAIN: mas respuesta de orientacion 3D de las MPU.
 #define CONTROL_DEADBAND_DEFAULT 0.1f                                                 // Macro CONTROL_DEADBAND_DEFAULT: zona muerta casi grado a grado.
 #define CONTROL_SMOOTHING_DEFAULT 1.00f                                               // Macro CONTROL_SMOOTHING_DEFAULT: rampa directa; el filtrado vive en sensores.
@@ -128,7 +132,6 @@ static const float SRV_HARD_MAX[N_SERVOS] = {90, 120, 90, 90, 120, 90 };        
 
 // Filters and timing.
 #define COMP_ALPHA               0.97f                                                // Macro COMP_ALPHA: macro de configuracion para comp alpha.
-#define AS5600_EMA_ALPHA         1.00f                                                // Macro AS5600_EMA_ALPHA: AS5600 sin retardo para seguir al sensor.
 #define IMU_OUTPUT_EMA_ALPHA     1.00f                                                // Macro IMU_OUTPUT_EMA_ALPHA: MPU sin retardo para seguir al sensor.
 #define IMU_ACCEL_JUMP_LIMIT_DEG 28.0f                                                // Macro IMU_ACCEL_JUMP_LIMIT_DEG: macro de configuracion para control angular de servos.
 #define IMU_GYRO_RATE_LIMIT_DPS  220.0f                                               // Macro IMU_GYRO_RATE_LIMIT_DPS: macro de configuracion para lectura de sensores IMU/I2C.
